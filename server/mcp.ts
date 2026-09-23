@@ -169,6 +169,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       return data.panes;
     }
     case 'spawn_agent': {
+      if (!args.cli) throw new Error('cli is required — call list_clis first (e.g. "pi", "codex", "devin")');
       const pane = await api('/api/panes', {
         method: 'POST',
         body: {
@@ -195,6 +196,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       return pane;
     }
     case 'ask_agent': {
+      if (!args.cli) throw new Error('cli is required — call list_clis first (e.g. "pi", "codex", "devin")');
       const spawned = (await api('/api/panes', {
         method: 'POST',
         body: {
