@@ -1,141 +1,112 @@
-# BisMind — rough draft, not v1
+# BisMind
 
-**What this is:** a canvas of real terminal panes, each running a real CLI agent, plus a bridge so one
-agent can open others as visible sub-agents. **What it is not:** finished. Expect rough edges.
+Talk to any coding-agent harness, and let it use **any other harness as its sub-agents**, each running in a terminal you can watch.
 
-Known rough edges (honest list):
-- Restarting the pane server kills every live pane (folders, layout and pane metadata survive).
-- Workspaces/panes are not reattached after a server restart; you reopen them by hand.
-- No tmux backing yet, so you cannot attach to a pane from your own terminal.
-- Agent mode and Thread mode do not exist (the buttons are disabled on purpose).
-- The right sidebar holds a pane dashboard; there is no browser preview pane.
-- If a CLI has no provider/auth configured (pi today), its pane opens and prints the CLI's own
-  error — that is the CLI, not the canvas.
-
-If the canvas says "pane server offline", the terminals are fine — the server process is not
-running. Start it with `pnpm dev` in this folder, then hit Retry.
-
-A pane canvas of **real** CLI agent terminals, plus a bridge so one agent can spawn others —
-headed (visible TUI) or headless — inside those panes.
-
-Modelled on BridgeMind's Code mode: a let rail of workspace folders, a canvas of stacked or
-split panes, and a picker that opens Claude Code, Codex, Cursor Agent, Devin, Grok Build, Pi,
-Command Code, opencode, Cline or a plain shell.
+You pick a **sub-agent mode** once (for example *pi · deepseek-v4.1-flash* or *codex · gpt-5.6-sol*). From then on, whenever Claude Code, Codex or pi decides to use sub-agents inside BisMind, they are created in that mode instead of the harness's built-in ones. Each sub-agent is a real CLI agent in its own pane. Its final report goes back to the agent that spawned it.
 
 ```
-┌ workspaces ─┐┌──────────── pane canvas ────────────┐┌ dashboard ─┐
-│ BisMind  2  ││ Cursor Agent   ~/Projects/app       ││ needs you  │
-│  Cursor     ││  (live terminal)                    ││ working    │
-│  Codex      ││ Codex          ~/Projects/app       ││ idle       │
-│             ││  (live terminal)                    ││            │
-└─────────────┘└─────────────────────────────────────┘└────────────┘
+┌ Workspaces ─┐┌──────────── Claude Code ─────────┬──── auth-api · pi ────┐┌ Dashboard ────────┐
+│ BisMind  3  ││ > build the billing feature with  │ ● working 1m 12s      ││ Sub-agent mode    │
+│  Claude     ││   3 sub-agents                    ├──── ui · pi ──────────┤│ Pi Codex Claude … │
+│   ↳ auth-api││ ⏺ spawn_subagents (3)             │ ● done                ││ deepseek-v4.1-…   │
+│   ↳ ui      ││ ⏺ wait_subagents …                ├──── tests · pi ───────┤│ Sub-agents        │
+│   ↳ tests   ││ [3 sub-agents: auth-api ui tests] │ ● asking              ││  auth-api working │
+└─────────────┘└───────────────────────────────────┴───────────────────────┘└───────────────────┘
 ```
 
 ## Run it
 
 ```bash
-pnpm install        # chmods node-pty's spawn-helper as a postinstall
-pnpm dev            # pane server on :4317 + UI on http://localhost:5317
+pnpm install
+bismind            # starts the server if needed and opens the app window
 ```
 
-Open the URL the pane server prints (it carries the token):
+(`bismind` is `~/.local/bin/bismind` → `bin/bismind.mjs`.) The server serves the built UI on
+`http://127.0.0.1:4317`. For UI work, `pnpm dev` runs the server with `--watch` plus Vite on :5317
+(`bismind --dev` opens that).
 
-```
-open "http://localhost:5317/?t=$(cat ~/.bismind/token)"
-```
+Requirements: Node 22.18+ (runs the TypeScript directly), tmux (`brew install tmux`), and whichever of
+`claude`, `codex`, `pi` and `devin` you use.
 
-`pnpm build && node bin/bismind.mjs up` serves the built UI from the pane server instead
-(`http://127.0.0.1:4317`).
+## How it works
+
+- **Every agent is a tmux session** on a private socket (`tmux -L bismind`). Agents keep running when
+  the app window or the server goes away, and reattach when the server comes back. `bismind attach <name>`
+  opens any agent in your own terminal.
+- **Main agents** are the ones you talk to. BisMind launches them with its sub-agent tools and guidance
+  on using sub-agents well: split the work, write self-contained briefs, spawn in parallel, wait instead
+  of polling, answer questions, verify before reporting.
+  - Claude Code: MCP tools via `--mcp-config`, guidance via `--append-system-prompt`, and a `PreToolUse`
+    hook that **redirects** its built-in Agent/Task tool to BisMind (unless the mode is `native`).
+  - Codex: MCP tools and `developer_instructions` via `-c` overrides.
+  - pi: a pi extension (`pi-extension/bismind.ts`) that adds the tools. It also **pushes** each
+    sub-agent's result back as a message, so pi never waits or polls.
+- **Sub-agents** get a brief telling them how to report. Each harness signals the end of a turn with its final message:
+  Claude Code → `Stop` hook · Codex → `notify` · pi → extension `agent_end` · Devin → idle detection.
+  A sub-agent that goes silent for 90s is marked stalled, and its screen is returned so the parent can decide what to do.
+- **Questions (interactive sub-agents):** a sub-agent calls `ask_parent` (MCP or pi tool; Devin uses
+  `bismind ask "…"`), then ends its turn. It shows under **Needs you** in the dashboard. The parent answers
+  with `message_subagent`, or asks you first if the decision is yours. You can also answer straight from
+  the dashboard. Sub-agents can post one-line `report_progress` notes.
+- **Parents never miss results:** pi gets each result pushed as a message. Claude Code and Codex get it
+  from `wait_subagents`; if one ended its turn instead of waiting, BisMind types a short
+  `[BisMind] Sub-agent update…` into its pane once it's idle, so it picks the reports up.
+- **Sub-agents can't fan out:** inside a sub-agent the MCP server exposes only `ask_parent` and `report_progress`.
+- **"Spawn N sub-agents" always lands:** the orchestrator prompt says to use exactly N, and for Claude a
+  `UserPromptSubmit` hook adds a reminder whenever your message mentions sub-agents.
+- **Parallel edits:** `isolate: true` gives a sub-agent its own git worktree and branch (`bismind/<name>-<id>`).
+
+Nothing is written to your global harness configs. Everything is passed per launch. Look at
+`~/.bismind/agents/<id>/launch.sh` to see exactly how an agent was started.
+
+## Sub-agent tools (MCP server `bismind`, and the same names in pi)
+
+| tool | what it does |
+|---|---|
+| `spawn_subagents` | start up to 12 sub-agents in parallel on the current mode; returns immediately |
+| `wait_subagents` | block until all (or any) settle; returns each final report (pi gets them pushed) |
+| `message_subagent` | answer a question, correct course, or give a follow-up |
+| `read_subagent` | read a sub-agent's screen right now |
+| `stop_subagent` · `list_subagents` · `subagent_mode` | |
+
+Optional per task: `harness`, `model`, `thinking`, `cwd`, `isolate`, `name`.
 
 ## CLI
 
 ```
-bismind up                  start the pane server, print the canvas URL
-bismind mcp                 MCP bridge on stdio (what agent CLIs launch)
-bismind install <target>    print the MCP registration for a CLI (--write applies it)
-                            codex | grok | devin | claude | cursor | gemini | opencode
-                            claude-agents → Claude Code subagent files that delegate to pi/devin/codex
-bismind clis                which agent CLIs are installed
-bismind doctor              readiness per CLI, with auth notes
-bismind status | stop
+bismind                         open the app window
+bismind new <harness>           start claude|codex|pi|devin|shell here, attached to this terminal
+bismind ls                      agents and their sub-agents
+bismind attach <name>           attach this terminal to any agent (detach: ctrl-b d)
+bismind mode [spec]             pi:<provider/model>[:thinking] | codex:<model> | claude:<model> | devin:<model> | native
+bismind models <harness>        models you can use in a mode spec
+bismind spawn --task "…"  ·  wait  ·  send <name> "…"  ·  read <name>  ·  kill <name>
+bismind install claude|codex    register the MCP bridge globally (for sessions outside the app)
+bismind up | stop | doctor
 ```
 
-## The point: agents spawning agents
+## Settings
 
-Every pane is a real PTY running a real CLI. The MCP bridge exposes that canvas to any agent
-that speaks MCP, so a parent agent can delegate:
+`~/.bismind/settings.json` holds the mode, autonomy, workspaces and UI layout. **Autonomy**
+`full` (default) launches sub-agents without permission prompts (`--dangerously-skip-permissions`,
+`--dangerously-bypass-approvals-and-sandbox`, `--permission-mode dangerous`); `ask` keeps each
+harness's normal prompts, which you answer in the sub-agent's pane. Main agents always use their normal
+permissions.
 
-| MCP tool | What it does |
-|---|---|
-| `list_clis` | which agent CLIs are installed |
-| `spawn_agent` | open a pane running another CLI as a sub-agent (`headed: true` = visible TUI) |
-| `ask_agent` | spawn + wait + return the output (headed by default, `headed: false` for quiet runs) |
-| `list_panes` | every pane, its CLI, cwd, status and parent |
-| `read_pane` | recent output as plain text (ANSI stripped) |
-| `wait_for_agent` | block until `exit`, `idle`, or a `pattern` |
-| `send_to_pane` | answer an interactive prompt in a sub-agent TUI |
-| `close_pane` | kill the sub-agent |
-| `run_command` | run a shell command in a visible pane and return its output |
-
-Sub-agents pass `parent_pane_id`, so the canvas draws the lineage (`↳ from Codex`) and the rail
-nests the child under its parent. That nesting is the recursive part: a pane spawned by an
-agent can itself spawn panes.
-
-### Wiring a parent agent
-
-```bash
-bismind install claude --write          # writes mcpServers.bismind into ~/.claude.json
-bismind install claude-agents --write   # ~/.claude/agents/{pi,devin,codex,delegate}.md
-bismind install codex  --write          # codex mcp add bismind -- node …/bismind.mjs mcp
-bismind install grok   --write
-bismind install cursor --write          # merges ~/.cursor/mcp.json
-```
-
-`~/.claude/agents/pi.md` is a Claude Code subagent whose whole job is: call
-`mcp__bismind__spawn_agent` with `cli: "pi"`, `headed: true`, the full task, then
-`wait_for_agent` + `read_pane` and report back. So "Claude Code, use pi for this" works, and
-you watch pi work in a pane.
-
-Add any other CLI to the registry without touching code — `~/.bismind/clis.json`:
-
-```json
-[{ "id": "myagent", "label": "My Agent", "bins": ["myagent"],
-   "args": ["--tui"], "exec": ["--headless", "{prompt}"],
-   "modelArgs": ["--model", "{model}"], "accent": "#9ca3af" }]
-```
-
-## REST API (what the UI and MCP both drive)
+## Layout of the code
 
 ```
-GET    /api/clis                    installed CLIs + provider lists
-GET    /api/panes                   every pane
-POST   /api/panes                   {cli, cwd, prompt?, headed?, model?, provider?, args?, parent_pane_id?}
-GET    /api/panes/:id?lines=200     pane + plain-text tail
-POST   /api/panes/:id/input         {text, submit}
-POST   /api/panes/:id/wait          {until: exit|idle|pattern, pattern?, timeout_ms?}
-DELETE /api/panes/:id
-GET    /api/workspaces              POST to add a folder, DELETE /api/workspaces/:id
-PATCH  /api/state                   {layout, sidebarHidden, paneWorkspace}
-WS     /ws?t=<token>                attach | detach | input | resize ⇄ snapshot | data | status | created | closed
+server/agents.ts       engine: spawn, tmux sessions, status, results, questions, waits, worktrees
+server/harnesses.ts    how each harness is launched as a main agent or a sub-agent
+server/prompts.ts      orchestrator + sub-agent guidance
+server/orchestrate.ts  sub-agent batches, mode resolution, summaries
+server/mcp.ts          stdio MCP bridge (answers the handshake instantly)
+server/index.ts        REST + WebSocket + static UI
+pi-extension/          pi integration
+bin/bismind.mjs        CLI and hook entry point
+src/                   the app (React + xterm.js): rail, canvas, panes, dashboard
 ```
 
-Auth: a random token in `~/.bismind/token`, required as `x-bismind-token` or `?t=`. The server
-binds 127.0.0.1 only.
-
-## Keyboard
-
-`⌘T` new pane · `⌘B` rail · `⇧⌘B` dashboard · click a pane to focus it · `esc` closes the picker.
-
-## Notes
-
-- **Lightweight by design:** one PTY per pane with a capped buffer; the server coalesces
-  output; the browser batches terminal writes for background panes at 4 fps and only the
-  focused pane is interactive. Six panes per workspace.
-- **Headed vs headless:** a prompt plus a CLI that has a headless mode (`claude -p`,
-  `codex exec`, `devin -p`, `pi -p`, `cursor-agent -p`, `grok -p`, `opencode run`) runs
-  headless unless you pass `headed: true`; CLIs without one get the prompt typed into their TUI.
-- **Models:** `model`/`provider` map to each CLI's own flags (`pi --provider … --model …`,
-  `codex --model …`). Pi lists its providers in the picker; it needs `pi` → `/login` once.
-- **State** lives in `~/.bismind/state.json` (folders, layout, pane→workspace); live PTYs live
-  in the server process, so reloading the UI reattaches.
-- Panes and processes are real: closing a pane kills its CLI.
+The app is Code mode only: workspaces on the left, terminals in the middle, the Dashboard (sub-agent
+mode, needs-you / working / idle) on the right. Click your name for Settings; the sun/moon switches the
+light and dark themes.
