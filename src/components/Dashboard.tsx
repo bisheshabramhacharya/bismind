@@ -170,8 +170,18 @@ function ModeCard() {
   );
 }
 
+// A row moves to another section when its agent's status changes, which remounts it.
+// Keep what the user typed and which rows they opened outside the component so neither is lost.
+const drafts = new Map<string, string>();
+const expanded = new Set<string>();
+
 function Reply({ agent }: { agent: Agent }) {
-  const [text, setText] = useState('');
+  const [text, setTextState] = useState(() => drafts.get(agent.id) ?? '');
+  const setText = (t: string) => {
+    if (t) drafts.set(agent.id, t);
+    else drafts.delete(agent.id);
+    setTextState(t);
+  };
   const [busy, setBusy] = useState(false);
   const send = async () => {
     if (!text.trim()) return;
@@ -219,7 +229,14 @@ function stateText(a: Agent): string {
 }
 
 function Row({ agent, parent }: { agent: Agent; parent: Agent | null }) {
-  const [open, setOpen] = useState(agent.status === 'waiting');
+  const [open, setOpenState] = useState(agent.status === 'waiting' || expanded.has(agent.id));
+  const setOpen = (next: boolean | ((o: boolean) => boolean)) =>
+    setOpenState(o => {
+      const v = typeof next === 'function' ? next(o) : next;
+      if (v) expanded.add(agent.id);
+      else expanded.delete(agent.id);
+      return v;
+    });
   const [confirmClose, setConfirmClose] = useState(false);
   useEffect(() => {
     if (!confirmClose) return;

@@ -1,7 +1,7 @@
 {
   "name": "bismind",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Talk to any coding-agent harness; sub-agents on any harness, in visible terminals.",
   "scripts": {
