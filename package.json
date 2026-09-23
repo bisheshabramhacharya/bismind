@@ -1,15 +1,15 @@
 {
   "name": "bismind",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.5.0",
   "type": "module",
-  "description": "A pane canvas of real CLI agent terminals, modelled on BridgeMind's Code mode.",
+  "description": "Talk to any coding-agent harness; sub-agents on any harness, in visible terminals.",
   "scripts": {
-    "dev": "concurrently -n web,server -c blue,magenta \"vite\" \"tsx watch server/index.ts\"",
+    "dev": "concurrently -k -n server,web -c magenta,blue \"node --watch --no-warnings server/index.ts\" \"vite\"",
+    "dev:server": "node --watch --no-warnings server/index.ts",
     "dev:web": "vite",
-    "dev:server": "tsx watch server/index.ts",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview",
+    "start": "node bin/bismind.mjs",
     "postinstall": "node scripts/fix-pty-perms.mjs"
   },
   "dependencies": {
@@ -28,7 +28,6 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.0.4",
     "concurrently": "^9.2.1",
-    "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vite": "^7.1.9"
   },

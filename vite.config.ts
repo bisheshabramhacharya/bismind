@@ -13,5 +13,5 @@ export default defineConfig({
       '/ws': { target: `ws://127.0.0.1:${PORT}`, ws: true },
     },
   },
-  build: { outDir: 'dist/web', emptyOutDir: true },
+  build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 1500 },
 });
