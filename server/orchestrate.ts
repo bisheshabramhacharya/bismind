@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { type Agent, agents } from './agents.ts';
 import { type HarnessId, describeMode, readSettings } from './config.ts';
 import { harnessLabel, harnesses } from './harnesses.ts';
+import { reviewBrief } from './prompts.ts';
 
 export interface TaskSpec {
   task: string;
@@ -50,6 +51,46 @@ export async function spawnSubagents(parentId: string | null, tasks: TaskSpec[],
       ? { ok: true as const, id: r.value.id, name: r.value.name, harness: r.value.harness, model: r.value.model, cwd: r.value.cwd, branch: r.value.worktree?.branch ?? null }
       : { ok: false as const, task: tasks[i].name ?? tasks[i].task.slice(0, 60), error: r.reason instanceof Error ? r.reason.message : String(r.reason) },
   );
+}
+
+/** Finished sub-agents with a branch to review, that nobody has reviewed yet. */
+export function reviewable(parentId: string): Agent[] {
+  const kids = agents.children(parentId);
+  const reviewed = new Set(kids.map(k => k.reviewOf).filter(Boolean));
+  return kids.filter(k => !k.reviewOf && k.worktree && k.status === 'done' && !reviewed.has(k.id));
+}
+
+/** Spawn one read-only reviewer per finished sub-agent, on the user's review-agent settings. */
+export async function reviewSubagents(parentId: string, ids?: string[]) {
+  const parent = agents.must(parentId);
+  const targets = ids?.length ? ids.map(id => agents.must(id)) : reviewable(parent.id);
+  if (!targets.length) return { spawned: [], note: 'Nothing to review: no finished sub-agents with a branch that are not reviewed yet.' };
+  const { mode, review } = readSettings();
+  const sameAsMode = review.harness === 'mode';
+  const harness: HarnessId = review.harness !== 'mode' ? review.harness : mode.harness === 'native' ? parent.harness : mode.harness;
+  const results = await Promise.allSettled(
+    targets.map(t => {
+      if (!t.worktree) throw new Error(`${t.name} has no branch of its own to review`);
+      return agents.spawn({
+        role: 'sub',
+        harness,
+        model: sameAsMode ? mode.model : review.model,
+        thinking: sameAsMode ? mode.thinking : review.thinking,
+        task: reviewBrief(t, review.instructions),
+        name: `review-${t.name}`,
+        cwd: t.worktree.path,
+        parentId: parent.id,
+        reviewOf: t.id,
+      });
+    }),
+  );
+  return {
+    spawned: results.map((r, i) =>
+      r.status === 'fulfilled'
+        ? { ok: true as const, id: r.value.id, name: r.value.name, reviews: targets[i].name, harness: r.value.harness, model: r.value.model }
+        : { ok: false as const, reviews: targets[i].name, error: r.reason instanceof Error ? r.reason.message : String(r.reason) },
+    ),
+  };
 }
 
 function elapsed(a: Agent): string {

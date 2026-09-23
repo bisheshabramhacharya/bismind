@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, elapsed, patchSettings, patchUi, setState, shortModel, tildify, useStore } from '../lib/store';
-import type { Agent, ModelOption, SubagentMode } from '../lib/types';
+import type { Agent, ModelOption, ReviewAgent, SubagentMode } from '../lib/types';
 import { HarnessIcon, Icon } from './Icons';
 import { StatusDot, openSubagent, useTick } from './Pane';
 
@@ -10,6 +10,13 @@ const HARNESSES: { id: SubagentMode['harness']; label: string }[] = [
   { id: 'claude', label: 'Claude' },
   { id: 'devin', label: 'Devin' },
   { id: 'native', label: 'Native' },
+];
+const REVIEW_HARNESSES: { id: ReviewAgent['harness']; label: string }[] = [
+  { id: 'mode', label: 'Same' },
+  { id: 'pi', label: 'Pi' },
+  { id: 'codex', label: 'Codex' },
+  { id: 'claude', label: 'Claude' },
+  { id: 'devin', label: 'Devin' },
 ];
 const THINKING = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 const LABEL: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', shell: 'Terminal' };
@@ -271,6 +278,80 @@ function Row({ agent, parent }: { agent: Agent; parent: Agent | null }) {
   );
 }
 
+function ReviewCard() {
+  const settings = useStore(s => s.settings);
+  const [more, setMore] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
+  if (!settings) return null;
+  const review = settings.review;
+  const set = (patch: Partial<ReviewAgent>) => void patchSettings({ review: { ...review, ...patch } });
+  const same = review.harness === 'mode';
+  return (
+    <div className="mode">
+      <div className="mode-head">
+        <span className="mode-title">Review agent</span>
+        <button className="mode-more" onClick={() => setMore(m => !m)}>
+          {more ? 'Less' : 'More'}
+        </button>
+      </div>
+      <div className="seg seg-icons">
+        {REVIEW_HARNESSES.map(h => (
+          <button
+            key={h.id}
+            className={review.harness === h.id ? 'on' : ''}
+            onClick={() => set({ harness: h.id, model: h.id === review.harness ? review.model : null })}
+            title={h.id === 'mode' ? 'Same as the sub-agent mode' : h.label}
+          >
+            {h.id !== 'mode' && <HarnessIcon id={h.id} size={13} />}
+            {h.label}
+          </button>
+        ))}
+      </div>
+      {!same && <ModelPicker harness={review.harness} value={review.model} onChange={model => set({ model })} />}
+      {more && (
+        <>
+          {!same && (
+            <label className="setting">
+              <span className="setting-label">Thinking</span>
+              <select className="field" value={review.thinking ?? ''} onChange={e => set({ thinking: e.target.value || null })}>
+                {THINKING.map(t => (
+                  <option key={t} value={t}>
+                    {t || 'default'}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="setting">
+            <span className="setting-label">Instructions for every review</span>
+            <textarea
+              className="field review-instructions"
+              rows={3}
+              placeholder="e.g. Use the code-review skill. Run pnpm test."
+              value={draft ?? review.instructions}
+              onChange={e => setDraft(e.target.value)}
+              onBlur={() => {
+                if (draft !== null && draft !== review.instructions) set({ instructions: draft });
+                setDraft(null);
+              }}
+            />
+          </label>
+        </>
+      )}
+      <p className="mode-line">
+        Reviews run as <strong>{same ? 'your sub-agent mode' : review.harness}</strong>
+        {!same && review.model ? (
+          <>
+            {' · '}
+            <strong>{shortModel(review.model)}</strong>
+          </>
+        ) : null}
+        {review.instructions.trim() ? ', with your instructions' : ''}. Start them with <strong>Review</strong> under a main agent.
+      </p>
+    </div>
+  );
+}
+
 export function Dashboard() {
   const agents = useStore(s => s.agents);
   useTick(agents.some(a => ['working', 'starting', 'waiting'].includes(a.status)));
@@ -304,22 +385,23 @@ export function Dashboard() {
       </div>
       <div className="dash-scroll">
         <ModeCard />
+        <ReviewCard />
         <div className="stats">
           <div className="stat">
             <span className="stat-label">
-              <span className="dot dot-waiting" style={{ animation: 'none' }} /> Needs you
+              <StatusDot status="waiting" /> Needs you
             </span>
             <div className="stat-value">{needs.length}</div>
           </div>
           <div className="stat">
             <span className="stat-label">
-              <span className="dot dot-working" style={{ animation: 'none' }} /> Working
+              <StatusDot status="working" /> Working
             </span>
             <div className="stat-value">{working.length}</div>
           </div>
           <div className="stat">
             <span className="stat-label">
-              <span className="dot" /> Idle
+              <StatusDot status="idle" /> Idle
             </span>
             <div className="stat-value">{idle.length + done.length}</div>
           </div>

@@ -37,7 +37,12 @@ export interface Agent {
   updatedAt: number;
   workStartedAt: number | null;
   finishedAt: number | null;
-  worktree: { path: string; branch: string; repo: string } | null;
+  /** `base`: the commit the branch started from (missing on agents made before it was recorded). */
+  worktree: { path: string; branch: string; repo: string; base?: string } | null;
+  /** GitHub issue this sub-agent works on. */
+  issue?: number | null;
+  /** For a review sub-agent: the id of the sub-agent whose work it reviews. */
+  reviewOf?: string | null;
   session: string;
 }
 
@@ -54,6 +59,7 @@ export interface SpawnInput {
   isolate?: boolean;
   /** GitHub issue this sub-agent works on; it opens a PR that closes it. */
   issue?: number | null;
+  reviewOf?: string | null;
   cols?: number;
   rows?: number;
 }
@@ -242,8 +248,9 @@ export class Agents extends EventEmitter {
       const branch = `bismind/${name}-${id}`;
       const path = join(WORKTREES_DIR, id);
       mkdirSync(WORKTREES_DIR, { recursive: true });
-      await git(repo, ['worktree', 'add', '-b', branch, path, 'HEAD']);
-      worktree = { path, branch, repo };
+      const base = await git(repo, ['rev-parse', 'HEAD']);
+      await git(repo, ['worktree', 'add', '-b', branch, path, base]);
+      worktree = { path, branch, repo, base };
       cwd = join(path, relative(repo, input.cwd));
     }
 
@@ -271,6 +278,8 @@ export class Agents extends EventEmitter {
       workStartedAt: role === 'sub' ? now : null,
       finishedAt: null,
       worktree,
+      issue: input.issue ?? null,
+      reviewOf: input.reviewOf ?? null,
       session: `bm-${id}`,
     };
 
@@ -395,8 +404,8 @@ export class Agents extends EventEmitter {
 
   async kill(idOrName: string) {
     const a = this.must(idOrName);
-    // Closing an agent closes its whole team.
-    for (const child of this.children(a.id)) await this.kill(child.id);
+    // Closing an agent closes its whole team, newest first (reviewers before the workers they review).
+    for (const child of this.children(a.id).reverse()) await this.kill(child.id);
     await tmux.kill(a.session);
     this.live.get(a.id)?.proc?.kill();
     this.live.delete(a.id);
@@ -404,6 +413,10 @@ export class Agents extends EventEmitter {
     rmSync(join(AGENTS_DIR, a.id), { recursive: true, force: true });
     this.save();
     this.emit('removed', { id: a.id });
+    // Drop its worktree folder but keep the branch (and its commits). Git refuses when there are
+    // uncommitted changes, which is what we want; skip it while another agent (a reviewer) works there.
+    const w = a.worktree;
+    if (w && !this.list().some(o => o.cwd === w.path || o.cwd.startsWith(`${w.path}/`))) await git(w.repo, ['worktree', 'remove', w.path]).catch(() => undefined);
   }
 
   /** Stop the process but keep the agent (and its result) listed. */

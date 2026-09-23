@@ -78,6 +78,16 @@ const TOOLS = [
     },
   },
   {
+    name: 'review_subagents',
+    description:
+      "Start one read-only reviewer per finished sub-agent that has its own branch and no review yet (or the ids you pass), on the review agent the user configured. Each reviewer returns 'Verdict: APPROVE | CHANGES REQUESTED' with problems at file:line. Reviewers are your sub-agents named review-<worker>.",
+    inputSchema: {
+      type: 'object',
+      properties: { ids: { type: 'array', items: { type: 'string' }, description: 'Sub-agents to review. Defaults to every finished, unreviewed one.' } },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'stop_subagent',
     description: 'Stop a sub-agent. close=true also removes its pane; otherwise the pane stays listed with its result.',
     inputSchema: {
@@ -143,6 +153,9 @@ async function callTool(name: string, args: Record<string, any>): Promise<unknow
       return { ok: true, next: 'Message delivered. Call wait_subagents to get its next result.' };
     case 'read_subagent':
       return api(`/api/agents/${encodeURIComponent(args.id)}/read?lines=${Number(args.lines ?? 120)}`);
+    case 'review_subagents':
+      if (!PARENT) throw new Error('review_subagents only works inside BisMind');
+      return api('/api/review', { body: { parentId: PARENT, ids: args.ids }, timeoutMs: 120_000 });
     case 'stop_subagent':
       await api(`/api/agents/${encodeURIComponent(args.id)}${args.close ? '' : '/stop'}`, { method: args.close ? 'DELETE' : 'POST' });
       return { ok: true };

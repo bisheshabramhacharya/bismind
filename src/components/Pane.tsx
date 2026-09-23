@@ -14,8 +14,15 @@ export const STATUS_LABEL: Record<Agent['status'], string> = {
   error: 'error',
 };
 
+const CELLS = Array.from({ length: 9 }, (_, i) => <i key={i} />);
+
+/** A 3×3 pixel status mark: pixels run around the ring while working, and hold a still pattern otherwise. */
 export function StatusDot({ status }: { status: Agent['status'] }) {
-  return <span className={`dot dot-${status}`} />;
+  return (
+    <span className={`px px-${status}`} role="img" aria-label={STATUS_LABEL[status]}>
+      {CELLS}
+    </span>
+  );
 }
 
 /** Re-render every second while something is running, so timers tick. */
@@ -35,28 +42,61 @@ export function openSubagent(id: string) {
   setState({ focusedId: id, peeked: showing || s.peeked.includes(id) ? s.peeked : [...s.peeked, id], maximizedId: null });
 }
 
+/** A reviewer's verdict, read from its report. */
+function verdict(a: Agent): 'approve' | 'changes' | null {
+  if (!a.reviewOf || a.status !== 'done' || !a.result) return null;
+  const m = /Verdict:\W*(APPROVE|CHANGES REQUESTED)/i.exec(a.result);
+  return m ? (m[1].toUpperCase() === 'APPROVE' ? 'approve' : 'changes') : null;
+}
+
 function SubTray({ parent }: { parent: Agent }) {
   const subs = useStore(s => s.agents.filter(a => a.parentId === parent.id));
   const focusedId = useStore(s => s.focusedId);
   const showing = useStore(s => s.settings?.ui.showSubagents ?? true);
+  const [reviewing, setReviewing] = useState<string | null>(null);
   useTick(subs.some(a => a.status === 'working' || a.status === 'starting'));
   if (!subs.length) return null;
   const running = subs.filter(a => ['starting', 'working'].includes(a.status)).length;
+  // Same rule as the server: finished, has its own branch, not a reviewer, not reviewed yet.
+  const toReview = subs.filter(k => !k.reviewOf && k.worktree && k.status === 'done' && !subs.some(r => r.reviewOf === k.id));
+  const review = async () => {
+    setReviewing('Starting…');
+    try {
+      await api('/api/review', { body: { parentId: parent.id } });
+      setReviewing(null);
+    } catch (e) {
+      setReviewing(e instanceof Error ? e.message : String(e));
+    }
+  };
   return (
     <div className="subtray">
       <button className="subtray-label" title={`${showing ? 'Hide' : 'Show'} sub-agent panes  ⌘J`} onClick={() => patchUi({ showSubagents: !showing })}>
         {showing ? <Icon.EyeOff size={13} /> : <Icon.Eye size={13} />} {running ? `${running} running` : `${subs.length} sub-agent${subs.length > 1 ? 's' : ''}`}
       </button>
       <div className="subtray-chips">
-        {subs.map(a => (
-          <button key={a.id} className={`chip ${focusedId === a.id ? 'chip-on' : ''}`} onClick={() => openSubagent(a.id)} title={a.task ?? ''} draggable onDragStart={e => dragAgent(e, a)}>
-            <StatusDot status={a.status} />
-            <span className="chip-name">{a.name}</span>
-            <span className="chip-meta">
-              {STATUS_LABEL[a.status]} · {elapsed(a)}
-            </span>
+        {subs.map(a => {
+          const v = verdict(a);
+          return (
+            <button key={a.id} className={`chip ${focusedId === a.id ? 'chip-on' : ''}`} onClick={() => openSubagent(a.id)} title={a.task ?? ''} draggable onDragStart={e => dragAgent(e, a)}>
+              <StatusDot status={a.status} />
+              <span className="chip-name">{a.name}</span>
+              {v ? (
+                <span className={`chip-meta chip-verdict-${v}`}>{v === 'approve' ? 'approved' : 'changes requested'}</span>
+              ) : (
+                <span className="chip-meta">
+                  {STATUS_LABEL[a.status]} · {elapsed(a)}
+                </span>
+              )}
+            </button>
+          );
+        })}
+        {toReview.length > 0 && (
+          <button className="chip chip-review" disabled={reviewing === 'Starting…'} onClick={review} title={reviewing ?? 'Start a read-only reviewer for each finished sub-agent (set the review agent up in the dashboard)'}>
+            <Icon.Check size={12} />
+            <span className="chip-name">{reviewing === 'Starting…' ? 'Starting…' : `Review ${toReview.length}`}</span>
+            {reviewing && reviewing !== 'Starting…' && <span className="chip-meta chip-verdict-changes">failed</span>}
           </button>
-        ))}
+        )}
       </div>
     </div>
   );

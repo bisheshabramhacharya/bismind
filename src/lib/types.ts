@@ -22,7 +22,9 @@ export interface Agent {
   updatedAt: number;
   workStartedAt: number | null;
   finishedAt: number | null;
-  worktree: { path: string; branch: string; repo: string } | null;
+  worktree: { path: string; branch: string; repo: string; base?: string } | null;
+  issue?: number | null;
+  reviewOf?: string | null;
   session: string;
 }
 
@@ -30,6 +32,13 @@ export interface SubagentMode {
   harness: HarnessId | 'native';
   model: string | null;
   thinking: string | null;
+}
+
+export interface ReviewAgent {
+  harness: Exclude<HarnessId, 'shell'> | 'mode';
+  model: string | null;
+  thinking: string | null;
+  instructions: string;
 }
 
 export interface Workspace {
@@ -40,10 +49,10 @@ export interface Workspace {
 
 export interface Settings {
   mode: SubagentMode;
+  review: ReviewAgent;
   autonomy: 'full' | 'ask';
   workspaces: Workspace[];
   activeWorkspace: string | null;
-  userName: string;
   ui: { theme: 'dark' | 'light'; layout: 'stack' | 'grid' | 'columns'; showSubagents: boolean; rail: boolean; dashboard: boolean };
 }
 

@@ -13,7 +13,7 @@ import { agents } from './agents.ts';
 import { PORT, REPO, parseModeSpec, patchSettings, readSettings, readToken, type Settings } from './config.ts';
 import { harnesses } from './harnesses.ts';
 import { modelsFor } from './models.ts';
-import { modeInfo, spawnSubagents, summarize, waitFor } from './orchestrate.ts';
+import { modeInfo, reviewSubagents, spawnSubagents, summarize, waitFor } from './orchestrate.ts';
 import { tmux, writeTmuxConf } from './tmux.ts';
 
 process.removeAllListeners('warning');
@@ -77,7 +77,16 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     if (b.autonomy === 'full' || b.autonomy === 'ask') patch.autonomy = b.autonomy;
     if (b.ui) patch.ui = b.ui;
     if ('activeWorkspace' in b) patch.activeWorkspace = b.activeWorkspace;
-    if (typeof b.userName === 'string' && b.userName.trim()) patch.userName = b.userName.trim().slice(0, 40);
+    if (b.review && typeof b.review === 'object') {
+      const r = b.review;
+      if (!['mode', 'claude', 'codex', 'pi', 'devin'].includes(r.harness)) throw new HttpError(400, 'review.harness must be mode, claude, codex, pi or devin');
+      patch.review = {
+        harness: r.harness,
+        model: typeof r.model === 'string' && r.model ? r.model : null,
+        thinking: typeof r.thinking === 'string' && r.thinking ? r.thinking : null,
+        instructions: typeof r.instructions === 'string' ? r.instructions.slice(0, 4000) : '',
+      };
+    }
     const next = patchSettings(patch);
     broadcastSettings(next);
     return send(res, 200, { settings: next, mode: modeInfo() });
@@ -206,6 +215,11 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     const parent = url.searchParams.get('parent');
     const list = parent ? agents.children(parent) : agents.list().filter(a => a.role === 'sub');
     return send(res, 200, await Promise.all(list.map(a => summarize(a, false))));
+  }
+  if (path === '/api/review' && method === 'POST') {
+    const b = await body(req);
+    if (!b.parentId) throw new HttpError(400, 'parentId is required');
+    return send(res, 200, await reviewSubagents(String(b.parentId), Array.isArray(b.ids) ? b.ids : undefined));
   }
   if (path === '/api/wait' && method === 'POST') {
     const b = await body(req);

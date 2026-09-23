@@ -39,7 +39,7 @@ If the user has skills for a step (e.g. grilling, to-spec, to-tickets, code-revi
 2. **Spec**: write it to a file in the repo (e.g. \`docs/specs/<feature>.md\`) and get the user's OK before any tickets.
 3. **Tickets** as GitHub issues (\`gh issue create\`, when \`gh repo view\` works). Each ticket is a vertical slice that is verifiable on its own and fits one fresh context. Its body is a complete brief (the fields above) and names its blockers ("Blocked by #12"). Tickets that can run at the same time must not edit the same files.
 4. **"Spawn sub-agents for the tickets"** means: one sub-agent per **unblocked** ticket, all in one \`spawn_subagents\` call, each with \`issue: <n>\` and a short brief: "Implement #n (\`gh issue view n\`); spec: <path>", plus whatever the issue leaves out (conventions, verify commands). Each gets its own worktree and branch from your current HEAD and opens a PR that closes its issue. Blocked tickets go in the next wave, after their blockers are merged. Then end your turn.
-5. **Review each PR independently** before anything merges: when the user asks, spawn one review sub-agent per PR (brief: the issue, the spec, \`gh pr diff <n>\`, \`gh pr checks <n>\`; check spec fit, correctness and tests; verdict APPROVE or concrete problems with file:line). Send problems back to the worker that wrote the PR with \`message_subagent\`; it still has the context.
+5. **Review each PR independently** before anything merges: when the user asks, call \`review_subagents\`. It starts one read-only reviewer per finished sub-agent, on the review agent the user configured, and each returns "Verdict: APPROVE | CHANGES REQUESTED" with problems at file:line. The user may also start reviews with the Review button; either way the reviews are your sub-agents (named \`review-<worker>\`), so \`wait_subagents\` returns them. Send problems back to the worker that wrote the change with \`message_subagent\`; it still has the context.
 6. **Report** as one compact table (ticket · PR · worker status · review verdict) with one line per open problem. Don't paste raw reports. Merge only when the user says so, then start the next wave.
 Without GitHub, skip the issues and use \`isolate: true\`; review the branches instead.
 
@@ -93,6 +93,45 @@ Name: "${opts.name}". Your parent agent (${opts.parentLabel}) delegated ONE task
 - **Don't spawn sub-agents of your own.**
 - **Finish properly.** Work until the task is done and verified (build/tests where they exist). Don't stop halfway to ask whether to continue.
 ${finish}`;
+}
+
+/** Brief for a read-only reviewer of one sub-agent's branch. */
+export function reviewBrief(
+  t: { name: string; task: string | null; result: string | null; issue?: number | null; worktree: { path: string; branch: string; base?: string } | null },
+  instructions: string,
+): string {
+  const w = t.worktree!;
+  const change = w.base
+    ? `\`git diff ${w.base}...${w.branch}\` and \`git log --oneline ${w.base}..${w.branch}\``
+    : `the commits on \`${w.branch}\` since it branched off (find them with \`git log --oneline\`)`;
+  return `Review the work of sub-agent "${t.name}" before it is merged. This is a read-only review: do not edit files, commit, push, or comment on GitHub. You may run builds and tests.
+
+Where: its worktree ${w.path}, branch \`${w.branch}\`.
+The change: ${change}. If the branch has a PR (\`gh pr list --head ${w.branch}\`), also read its linked issue and \`gh pr checks\`.${t.issue ? ` It implements GitHub issue #${t.issue} (\`gh issue view ${t.issue}\`).` : ''}
+
+What it was asked to do:
+<<<
+${t.task ?? '(no brief recorded)'}
+>>>
+
+What it reported:
+<<<
+${t.result ?? '(no report)'}
+>>>
+
+Check, in order:
+1. Spec fit: does the change do everything it was asked, and nothing unrelated?
+2. Correctness: bugs, edge cases, error handling, security.
+3. Verification: run the build, typecheck and tests where they exist. Don't trust its report.
+4. Simplicity: needless code, duplication, dead code it added.
+Report only real problems, each with file:line, why it matters, and the fix. Skip style nits.${instructions.trim() ? `\n\nAlso follow these instructions from the user:\n${instructions.trim()}` : ''}
+
+Use this report instead of the usual Result template:
+
+## Review of ${t.name}
+Verdict: APPROVE | CHANGES REQUESTED
+- Checked: commands you ran and their results
+- Problems: "none", or one line each: [high|medium|low] file:line: problem → fix`;
 }
 
 export function subagentTaskMessage(task: string, systemPromptInjected: boolean, guidance: string): string {

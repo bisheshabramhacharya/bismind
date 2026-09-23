@@ -55,6 +55,13 @@ Requirements: Node 22.18+ (runs the TypeScript directly), tmux (`brew install tm
   returns every report at once (pi gets them queued for its next turn).
 - **Tickets → PRs:** a task with `issue: <n>` gets its own worktree and branch, pushes it, and opens a PR
   whose body is its report plus `Closes #n`. The orchestrator prompt covers interview → spec → issues → PRs.
+- **Review agent:** the dashboard's *Review agent* card picks who reviews finished work (same as the
+  sub-agent mode, or any harness/model/thinking) plus instructions added to every review (e.g. "use the
+  code-review skill"). The **Review** button under a main agent (or the `review_subagents` tool) starts one
+  read-only reviewer per finished, unreviewed sub-agent with a branch, in that sub-agent's worktree. Each
+  reports `Verdict: APPROVE | CHANGES REQUESTED`, shown on its chip. Reviewers are the main agent's
+  sub-agents, so it can read their verdicts and act on them.
+- **Closing a sub-agent** removes its worktree folder when it has no uncommitted changes; the branch stays.
 - **Agent references:** drag any agent (rail row, pane header, sub-agent chip) onto a terminal to paste
   `@bismind:<id> (name…; read it: bismind read <id>)`. It also drops as text into terminals outside the app.
   Any agent can follow it with `read_subagent` or `bismind read <id>` (task, status, last report, screen).
@@ -74,6 +81,7 @@ Nothing is written to your global harness configs. Everything is passed per laun
 | `wait_subagents` | block until all (or any) settle; returns each final report (pi gets them pushed) |
 | `message_subagent` | answer a question, correct course, or give a follow-up |
 | `read_subagent` | read any agent: task, status, last report and screen |
+| `review_subagents` | start read-only reviewers for finished sub-agents, on the configured review agent |
 | `stop_subagent` · `list_subagents` · `subagent_mode` | |
 
 Optional per task: `harness`, `model`, `thinking`, `cwd`, `isolate`, `issue`, `name`.

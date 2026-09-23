@@ -54,6 +54,15 @@ export interface SubagentMode {
   thinking: string | null;
 }
 
+/** Who reviews finished sub-agent work. `mode` means "the same as the sub-agent mode". */
+export interface ReviewAgent {
+  harness: Exclude<HarnessId, 'shell'> | 'mode';
+  model: string | null;
+  thinking: string | null;
+  /** Added to every review brief, e.g. "Use the code-review skill." */
+  instructions: string;
+}
+
 export interface Workspace {
   id: string;
   name: string;
@@ -62,12 +71,11 @@ export interface Workspace {
 
 export interface Settings {
   mode: SubagentMode;
+  review: ReviewAgent;
   /** full = sub-agents run without permission prompts; ask = they use the harness's normal prompts. */
   autonomy: 'full' | 'ask';
   workspaces: Workspace[];
   activeWorkspace: string | null;
-  /** Shown in the rail footer. */
-  userName: string;
   ui: {
     theme: 'dark' | 'light';
     layout: 'stack' | 'grid' | 'columns';
@@ -79,10 +87,10 @@ export interface Settings {
 
 const DEFAULT_SETTINGS: Settings = {
   mode: { harness: 'pi', model: 'commandcode/deepseek/deepseek-v4.1-flash', thinking: null },
+  review: { harness: 'mode', model: null, thinking: null, instructions: '' },
   autonomy: 'full',
   workspaces: [],
   activeWorkspace: null,
-  userName: (process.env.USER ?? 'you').replace(/^./, c => c.toUpperCase()),
   ui: { theme: 'dark', layout: 'stack', showSubagents: true, rail: true, dashboard: true },
 };
 
@@ -92,6 +100,7 @@ export function readSettings(): Settings {
     ...DEFAULT_SETTINGS,
     ...s,
     mode: { ...DEFAULT_SETTINGS.mode, ...(s.mode ?? {}) },
+    review: { ...DEFAULT_SETTINGS.review, ...(s.review ?? {}) },
     ui: { ...DEFAULT_SETTINGS.ui, ...(s.ui ?? {}) },
     workspaces: Array.isArray(s.workspaces) ? s.workspaces : [],
   };
@@ -103,6 +112,7 @@ export function patchSettings(patch: Partial<Settings>): Settings {
     ...current,
     ...patch,
     mode: { ...current.mode, ...(patch.mode ?? {}) },
+    review: { ...current.review, ...(patch.review ?? {}) },
     ui: { ...current.ui, ...(patch.ui ?? {}) },
   };
   writeJson(SETTINGS_PATH, next);
