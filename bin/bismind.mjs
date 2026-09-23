@@ -270,6 +270,17 @@ async function main() {
       console.log('Question sent to your parent agent. End your turn now; the answer will arrive as your next message.');
       return;
     }
+    case 'done': {
+      const id = process.env.BISMIND_AGENT_ID;
+      if (!id) return console.error('bismind done only works inside a BisMind sub-agent.');
+      // The report comes as arguments or on stdin (a heredoc keeps multi-line reports intact).
+      const report = (positionals.join(' ') || (await readStdin())).trim();
+      if (!report) return console.error("usage: bismind done \"report\"   or   bismind done <<'EOF' … EOF");
+      const { api } = await client();
+      await api(`/api/agents/${id}/done`, { body: { report } });
+      console.log('Report handed to your parent. You are done; end your turn.');
+      return;
+    }
     case 'spawn': {
       const { api } = await client();
       const task = flags.task ?? positionals.join(' ');
@@ -303,8 +314,14 @@ async function main() {
     }
     case 'read': {
       const { api } = await client();
-      const { screen } = await api(`/api/agents/${encodeURIComponent(positionals[0])}/screen?lines=${flags.lines ?? 120}`);
-      console.log(screen);
+      if (!positionals[0]) return console.error('usage: bismind read <name|id> [--lines 120]');
+      const a = await api(`/api/agents/${encodeURIComponent(positionals[0])}/read?lines=${flags.lines ?? 120}`);
+      const head = [`${a.name} (${a.id}) · ${a.harness}${a.model ? ` · ${a.model}` : ''} · ${a.role === 'sub' ? 'sub-agent' : 'main agent'} · ${a.status} · ${a.elapsed}`];
+      head.push(`cwd: ${a.cwd}${a.branch ? `  branch: ${a.branch}` : ''}${a.parent ? `  parent: ${a.parent}` : ''}`);
+      if (a.question) head.push(`\nasking: ${a.question}`);
+      if (a.task) head.push(`\n── task ──\n${a.task}`);
+      if (a.result) head.push(`\n── last report ──\n${a.result}`);
+      console.log(`${head.join('\n')}\n\n── screen ──\n${a.screen}`);
       return;
     }
     case 'kill': {
@@ -359,6 +376,7 @@ async function main() {
   bismind wait [names…] [--any] [--timeout 900]
   bismind send <name> "message"     bismind read <name>     bismind kill <name>
   bismind ask "question"            ${c.dim('(inside a sub-agent: ask your parent)')}
+  bismind done "report"             ${c.dim('(inside a sub-agent: hand in your report; also reads stdin)')}
 
   bismind up | stop | doctor | install claude|codex | mcp | server`);
       return;

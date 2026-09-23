@@ -42,15 +42,22 @@ Requirements: Node 22.18+ (runs the TypeScript directly), tmux (`brew install tm
   - pi: a pi extension (`pi-extension/bismind.ts`) that adds the tools. It also **pushes** each
     sub-agent's result back as a message, so pi never waits or polls.
 - **Sub-agents** get a brief telling them how to report. Each harness signals the end of a turn with its final message:
-  Claude Code → `Stop` hook · Codex → `notify` · pi → extension `agent_end` · Devin → idle detection.
+  Claude Code → `Stop` hook · Codex → `notify` · pi → extension `agent_end` · Devin → `bismind done <<'EOF' …report… EOF`
+  (Devin has no turn hook; if it never calls `done`, 45s of silence ends its turn with its screen as the report).
   A sub-agent that goes silent for 90s is marked stalled, and its screen is returned so the parent can decide what to do.
 - **Questions (interactive sub-agents):** a sub-agent calls `ask_parent` (MCP or pi tool; Devin uses
   `bismind ask "…"`), then ends its turn. It shows under **Needs you** in the dashboard. The parent answers
   with `message_subagent`, or asks you first if the decision is yours. You can also answer straight from
   the dashboard. Sub-agents can post one-line `report_progress` notes.
-- **Parents never miss results:** pi gets each result pushed as a message. Claude Code and Codex get it
-  from `wait_subagents`; if one ended its turn instead of waiting, BisMind types a short
-  `[BisMind] Sub-agent update…` into its pane once it's idle, so it picks the reports up.
+- **Idle orchestrators cost nothing:** after spawning, the orchestrator ends its turn. Only a **question**
+  wakes it (pi: pushed message; Claude Code/Codex: BisMind types `[BisMind] Sub-agent update…` into the idle
+  pane). Finished work doesn't wake it: you see panes finish, then tell it what's next and `wait_subagents`
+  returns every report at once (pi gets them queued for its next turn).
+- **Tickets → PRs:** a task with `issue: <n>` gets its own worktree and branch, pushes it, and opens a PR
+  whose body is its report plus `Closes #n`. The orchestrator prompt covers interview → spec → issues → PRs.
+- **Agent references:** drag any agent (rail row, pane header, sub-agent chip) onto a terminal to paste
+  `@bismind:<id> (name…; read it: bismind read <id>)`. It also drops as text into terminals outside the app.
+  Any agent can follow it with `read_subagent` or `bismind read <id>` (task, status, last report, screen).
 - **Sub-agents can't fan out:** inside a sub-agent the MCP server exposes only `ask_parent` and `report_progress`.
 - **"Spawn N sub-agents" always lands:** the orchestrator prompt says to use exactly N, and for Claude a
   `UserPromptSubmit` hook adds a reminder whenever your message mentions sub-agents.
@@ -66,10 +73,10 @@ Nothing is written to your global harness configs. Everything is passed per laun
 | `spawn_subagents` | start up to 12 sub-agents in parallel on the current mode; returns immediately |
 | `wait_subagents` | block until all (or any) settle; returns each final report (pi gets them pushed) |
 | `message_subagent` | answer a question, correct course, or give a follow-up |
-| `read_subagent` | read a sub-agent's screen right now |
+| `read_subagent` | read any agent: task, status, last report and screen |
 | `stop_subagent` · `list_subagents` · `subagent_mode` | |
 
-Optional per task: `harness`, `model`, `thinking`, `cwd`, `isolate`, `name`.
+Optional per task: `harness`, `model`, `thinking`, `cwd`, `isolate`, `issue`, `name`.
 
 ## CLI
 

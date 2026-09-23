@@ -163,6 +163,19 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
       await agents.message(id, String(b.text));
       return send(res, 200, { ok: true });
     }
+    if (action === 'read' && method === 'GET') {
+      // Everything another agent needs to understand this one: who it is, its task, its report, its screen.
+      const a = agents.must(id);
+      const parent = a.parentId ? agents.get(a.parentId) : null;
+      const screen = await agents.screen(a.id, Number(url.searchParams.get('lines') ?? 120));
+      return send(res, 200, { ...(await summarize(a, false)), role: a.role, parent: parent?.name ?? null, task: a.task, screen });
+    }
+    if (action === 'done' && method === 'POST') {
+      const b = await body(req);
+      if (!String(b.report ?? '').trim()) throw new HttpError(400, 'report is required');
+      agents.finish(agents.must(id).id, String(b.report).trim());
+      return send(res, 200, { ok: true });
+    }
     if (action === 'screen' && method === 'GET') {
       return send(res, 200, { screen: await agents.screen(id, Number(url.searchParams.get('lines') ?? 120)) });
     }

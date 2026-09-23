@@ -106,7 +106,12 @@ export default function bismind(pi: ExtensionAPI) {
           if (s.status === 'done') return `### ${s.name} finished (${s.harness}${s.model ? ` · ${s.model}` : ''}, ${s.elapsed})\n${s.result ?? '(no final message)'}`;
           return `### ${s.name} ${s.status}${s.result ? `\n${s.result}` : ''}`;
         });
-        pi.sendMessage({ customType: 'bismind_subagents', content: `Sub-agent update:\n\n${parts.join('\n\n')}`, display: true }, { triggerTurn: true, deliverAs: 'steer' });
+        // Only a question wakes pi; finished reports wait for its next turn, so an idle orchestrator spends nothing.
+        const asking = subs.some((s: any) => s?.status === 'waiting');
+        pi.sendMessage(
+          { customType: 'bismind_subagents', content: `Sub-agent update:\n\n${parts.join('\n\n')}`, display: true },
+          asking ? { triggerTurn: true, deliverAs: 'steer' } : { deliverAs: 'nextTurn' },
+        );
       } catch {
         await new Promise(r => setTimeout(r, 3000));
       }
@@ -129,24 +134,25 @@ export default function bismind(pi: ExtensionAPI) {
     thinking: Type.Optional(Type.String()),
     cwd: Type.Optional(Type.String()),
     isolate: Type.Optional(Type.Boolean({ description: 'Own git worktree + branch, for parallel edits to one repo.' })),
+    issue: Type.Optional(Type.Integer({ minimum: 1, description: 'GitHub issue number. Implies isolate; the sub-agent opens a PR that closes it.' })),
   });
 
   pi.registerTool({
     name: 'spawn_subagents',
     label: 'Spawn sub-agents',
     description:
-      "Start sub-agents in parallel, each in a visible BisMind terminal pane, on the user's sub-agent mode. Returns immediately. Each result is delivered to you automatically as a message when it finishes or asks a question, so do NOT poll, sleep, or read their screens in a loop. Put all independent tasks in ONE call.",
+      "Start sub-agents in parallel, each in a visible BisMind terminal pane, on the user's sub-agent mode. Returns immediately. A question from a sub-agent arrives as a message and wakes you; finished reports reach you on your next turn. Do NOT poll, sleep, or read their screens in a loop. Put all independent tasks in ONE call.",
     parameters: Type.Object({ tasks: Type.Array(Task, { minItems: 1, maxItems: 12 }), cwd: Type.Optional(Type.String()) }),
     async execute(_id, params: any) {
       const out = await api('/api/subagents', { parentId: AGENT_ID, tasks: params.tasks, cwd: params.cwd ?? process.cwd() }, 120_000);
-      return text({ ...out, next: 'Running. Results arrive automatically. End your turn or keep working on something independent.' });
+      return text({ ...out, next: 'Running. End your turn now unless you need their results to continue; a question from one wakes you.' });
     },
   });
 
   pi.registerTool({
     name: 'wait_subagents',
     label: 'Wait for sub-agents',
-    description: 'Block until your sub-agents finish (or any one settles). Usually unnecessary, since results are pushed to you. Use it only when you have nothing else to do and want the results in this turn.',
+    description: 'Block until your sub-agents finish (or any one settles) and return their reports. Use it when you need the results to continue this turn, or when the user says they are done.',
     parameters: Type.Object({
       ids: Type.Optional(Type.Array(Type.String())),
       until: Type.Optional(Type.String({ description: 'all | any' })),
@@ -171,11 +177,11 @@ export default function bismind(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: 'read_subagent',
-    label: 'Read sub-agent screen',
-    description: "Read a sub-agent's terminal right now. For checking a stuck agent only; don't poll.",
+    label: 'Read agent',
+    description: "Read any BisMind agent (a sub-agent, or one the user referenced as @bismind:<id>): its task, status, last report and terminal right now. Don't poll.",
     parameters: Type.Object({ id: Type.String(), lines: Type.Optional(Type.Number()) }),
     async execute(_id, params: any) {
-      return text((await api(`/api/agents/${encodeURIComponent(params.id)}/screen?lines=${params.lines ?? 120}`)).screen);
+      return text(await api(`/api/agents/${encodeURIComponent(params.id)}/read?lines=${params.lines ?? 120}`));
     },
   });
 

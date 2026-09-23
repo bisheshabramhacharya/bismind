@@ -21,6 +21,7 @@ const TASK_SCHEMA = {
     thinking: { type: 'string', description: 'Reasoning effort: low, medium, high, xhigh, max.' },
     cwd: { type: 'string', description: "Working directory. Defaults to yours." },
     isolate: { type: 'boolean', description: 'Give this sub-agent its own git worktree and branch. Use when parallel sub-agents edit the same repo.' },
+    issue: { type: 'integer', minimum: 1, description: 'GitHub issue number this sub-agent works on. Implies isolate; it pushes its branch and opens a PR that closes the issue.' },
   },
   required: ['task'],
   additionalProperties: false,
@@ -30,7 +31,7 @@ const TOOLS = [
   {
     name: 'spawn_subagents',
     description:
-      "Start one or more sub-agents in parallel, each in a visible BisMind terminal pane, using the user's sub-agent mode (harness + model). Returns immediately with their ids. Put all independent tasks in ONE call, then use wait_subagents.",
+      "Start one or more sub-agents in parallel, each in a visible BisMind terminal pane, using the user's sub-agent mode (harness + model). Returns immediately with their ids. Put all independent tasks in ONE call, then end your turn: BisMind wakes you when one asks a question.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -67,7 +68,8 @@ const TOOLS = [
   },
   {
     name: 'read_subagent',
-    description: "Read what is on a sub-agent's terminal right now (plain text). Useful for checking a stuck agent; don't use it to poll.",
+    description:
+      "Read any BisMind agent (a sub-agent, or one the user referenced as @bismind:<id>): its task, status, last report and what is on its terminal right now. Useful for checking a stuck agent; don't use it to poll.",
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string' }, lines: { type: 'number', description: 'Default 120.' } },
@@ -129,7 +131,7 @@ async function callTool(name: string, args: Record<string, any>): Promise<unknow
     case 'spawn_subagents': {
       const out = await api<{ spawned: { ok: boolean; id?: string }[] }>('/api/subagents', { body: { parentId: PARENT, tasks: args.tasks, cwd: args.cwd ?? process.cwd() }, timeoutMs: 120_000 });
       for (const s of out.spawned) if (s.ok && s.id) spawnedHere.push(s.id);
-      return { ...out, next: 'Sub-agents are running in visible panes. Call wait_subagents to get their results.' };
+      return { ...out, next: 'Sub-agents are running in visible panes. End your turn now unless you need their results to continue; BisMind wakes you if one asks a question.' };
     }
     case 'wait_subagents': {
       const timeoutMs = Math.round((args.timeout_seconds ?? 900) * 1000);
@@ -140,7 +142,7 @@ async function callTool(name: string, args: Record<string, any>): Promise<unknow
       await api(`/api/agents/${encodeURIComponent(args.id)}/message`, { body: { text: args.text } });
       return { ok: true, next: 'Message delivered. Call wait_subagents to get its next result.' };
     case 'read_subagent':
-      return api(`/api/agents/${encodeURIComponent(args.id)}/screen?lines=${Number(args.lines ?? 120)}`);
+      return api(`/api/agents/${encodeURIComponent(args.id)}/read?lines=${Number(args.lines ?? 120)}`);
     case 'stop_subagent':
       await api(`/api/agents/${encodeURIComponent(args.id)}${args.close ? '' : '/stop'}`, { method: args.close ? 'DELETE' : 'POST' });
       return { ok: true };

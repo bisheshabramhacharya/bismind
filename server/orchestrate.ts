@@ -15,6 +15,7 @@ export interface TaskSpec {
   thinking?: string;
   cwd?: string;
   isolate?: boolean;
+  issue?: number;
 }
 
 export async function spawnSubagents(parentId: string | null, tasks: TaskSpec[], cwd?: string) {
@@ -26,6 +27,7 @@ export async function spawnSubagents(parentId: string | null, tasks: TaskSpec[],
   const results = await Promise.allSettled(
     tasks.map(t => {
       if (!t?.task?.trim()) throw new Error('every task needs a "task" brief');
+      if (t.issue !== undefined && !(Number.isInteger(t.issue) && t.issue > 0)) throw new Error('issue must be a GitHub issue number');
       const h = t.harness ?? defaultHarness;
       const sameAsMode = !t.harness || t.harness === mode.harness;
       return agents.spawn({
@@ -37,7 +39,9 @@ export async function spawnSubagents(parentId: string | null, tasks: TaskSpec[],
         name: t.name ?? null,
         cwd: t.cwd ?? cwd ?? parent?.cwd ?? homedir(),
         parentId: parent?.id ?? null,
-        isolate: Boolean(t.isolate),
+        // A ticket gets its own branch, so its PR holds only its work.
+        isolate: Boolean(t.isolate || t.issue),
+        issue: t.issue ?? null,
       });
     }),
   );

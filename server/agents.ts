@@ -52,6 +52,8 @@ export interface SpawnInput {
   parentId?: string | null;
   workspaceId?: string | null;
   isolate?: boolean;
+  /** GitHub issue this sub-agent works on; it opens a PR that closes it. */
+  issue?: number | null;
   cols?: number;
   rows?: number;
 }
@@ -66,8 +68,8 @@ export interface Notice {
 
 const SETTLED: AgentStatus[] = ['done', 'waiting', 'exited', 'error'];
 const IDLE_AFTER_MS = 2500;
-/** Devin has no turn hook; call its turn over after this long without output. */
-const DEVIN_DONE_AFTER_MS = 8000;
+/** Devin has no turn hook and finishes with `bismind done`; if it forgets, call its turn over after this long without output. */
+const DEVIN_DONE_AFTER_MS = 45_000;
 /** Any sub-agent silent this long is stalled (crashed, errored, or stuck on a prompt). Live TUIs redraw timers every second. */
 const STALL_AFTER_MS = 90_000;
 const RING_LIMIT = 400 * 1024;
@@ -164,16 +166,17 @@ export class Agents extends EventEmitter {
     this.notices.push({ seq: ++this.seq, parentId: agent.parentId, agentId: agent.id, kind, at: Date.now() });
     if (this.notices.length > 500) this.notices.splice(0, this.notices.length - 500);
     this.emit('notice');
-    if (agent.parentId) {
+    // Only questions wake the parent. Finished work waits until the parent (or the user) asks for it.
+    if (agent.parentId && kind === 'question') {
       this.pendingWake.add(agent.parentId);
       this.scheduleWake(agent.parentId, 2000);
     }
   }
 
   // ─── Waking parents ───────────────────────────────────────────────────────────────
-  // pi gets results pushed by its extension. Claude Code and Codex only see results when they
-  // call wait_subagents; if one ended its turn instead, type a short notice into its pane so
-  // it picks the results up — the same "steer" pi gets, for every harness.
+  // A parent that ended its turn is woken only when a sub-agent asks a question, so an idle
+  // orchestrator spends no tokens while its sub-agents work. pi gets the question pushed by its
+  // extension; for Claude Code and Codex, type a short notice into the pane.
 
   beginWait(parentId: string) {
     this.activeWaits.set(parentId, (this.activeWaits.get(parentId) ?? 0) + 1);
@@ -203,14 +206,14 @@ export class Agents extends EventEmitter {
     const asking = kids.filter(k => k.status === 'waiting').map(k => k.name);
     const done = kids.filter(k => ['done', 'exited', 'error'].includes(k.status)).map(k => k.name);
     const running = kids.filter(k => ['starting', 'working'].includes(k.status)).length;
-    if (!asking.length && running) return; // wait until there's something worth waking for
     this.pendingWake.delete(parentId);
+    if (!asking.length) return; // answered already
     const parts = [
-      asking.length ? `${asking.join(', ')} asked you a question` : null,
+      `${asking.join(', ')} asked you a question`,
       done.length ? `${done.join(', ')} finished` : null,
       running ? `${running} still running` : null,
     ].filter(Boolean);
-    const text = `[BisMind] Sub-agent update: ${parts.join('; ')}. Call wait_subagents to read their reports${asking.length ? ', answer questions with message_subagent (ask me if it needs my decision)' : ''}, then continue.`;
+    const text = `[BisMind] Sub-agent update: ${parts.join('; ')}. Read the question with list_subagents and answer it with message_subagent (ask me first if it needs my decision). Then end your turn; don't wait on the others.`;
     await tmux.paste(p.session, text, true).catch(() => undefined);
     this.setStatus(parentId, 'working');
   }
@@ -282,6 +285,7 @@ export class Agents extends EventEmitter {
       task: agent.task,
       parentLabel: parent ? `${parent.name}, running ${harnessLabel(parent.harness)}` : null,
       worktree,
+      issue: input.issue ?? null,
       agentDir,
       orchestrate: settings.mode.harness !== 'native',
     });
@@ -429,6 +433,16 @@ export class Agents extends EventEmitter {
     this.setStatus(id, a.role === 'sub' ? 'done' : 'idle', { result, turns, finishedAt: Date.now(), progress: null });
     if (a.role === 'sub') this.notify(this.agents.get(id)!, 'done');
     else if (this.pendingWake.has(id)) this.scheduleWake(id, 1500);
+  }
+
+  /** A sub-agent's explicit report (`bismind done`), for harnesses without a turn hook. */
+  finish(id: string, report: string) {
+    const a = this.agents.get(id);
+    if (!a) throw new Error(`no agent ${id}`);
+    // The idle fallback may have settled it already; keep the real report.
+    if (a.status === 'done') return this.update(id, { result: report });
+    this.update(id, { question: null });
+    this.turnEnded(id, report);
   }
 
   progress(id: string, note: string) {

@@ -90,6 +90,7 @@ export interface LaunchInput {
   task: string | null;
   parentLabel: string | null;
   worktree: { branch: string } | null;
+  issue: number | null;
   agentDir: string;
   /** Inject orchestration guidance + block native sub-agents (false when mode is native). */
   orchestrate: boolean;
@@ -116,6 +117,9 @@ export function writeLaunch(input: LaunchInput): string {
           cwd: input.cwd,
           worktree: input.worktree,
           askHow: input.harness === 'devin' ? 'run `bismind ask "<one self-contained question>"` in the shell' : 'call the `ask_parent` tool with one self-contained question',
+          // Devin has no turn hook, so it hands its report over explicitly.
+          reportVia: input.harness === 'devin' ? 'shell' : 'final-message',
+          issue: input.issue,
         })
       : input.orchestrate
         ? orchestratorPrompt({ toolStyle: input.harness === 'pi' ? 'pi' : 'mcp' })
