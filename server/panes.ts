@@ -137,7 +137,7 @@ export class PaneManager extends EventEmitter {
       prompt,
       model: req.model ?? null,
       provider: req.provider ?? null,
-      headed: mode === 'interactive',
+      headed: resolved.mode !== 'exec',
     };
 
     const session: PtySession = {

@@ -1,4 +1,19 @@
-# BisMind
+# BisMind — rough draft, not v1
+
+**What this is:** a canvas of real terminal panes, each running a real CLI agent, plus a bridge so one
+agent can open others as visible sub-agents. **What it is not:** finished. Expect rough edges.
+
+Known rough edges (honest list):
+- Restarting the pane server kills every live pane (folders, layout and pane metadata survive).
+- Workspaces/panes are not reattached after a server restart; you reopen them by hand.
+- No tmux backing yet, so you cannot attach to a pane from your own terminal.
+- Agent mode and Thread mode do not exist (the buttons are disabled on purpose).
+- The right sidebar holds a pane dashboard; there is no browser preview pane.
+- If a CLI has no provider/auth configured (pi today), its pane opens and prints the CLI's own
+  error — that is the CLI, not the canvas.
+
+If the canvas says "pane server offline", the terminals are fine — the server process is not
+running. Start it with `pnpm dev` in this folder, then hit Retry.
 
 A pane canvas of **real** CLI agent terminals, plus a bridge so one agent can spawn others —
 headed (visible TUI) or headless — inside those panes.

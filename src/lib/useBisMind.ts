@@ -9,6 +9,7 @@ export function useBisMind() {
   const [maximized, setMaximized] = useState<string | null>(null);
   const [error, setError] = useState<string>('');
   const [ready, setReady] = useState(false);
+  const [connection, setConnection] = useState<'connecting' | 'online' | 'offline'>('connecting');
   const fresh = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -18,6 +19,7 @@ export function useBisMind() {
         setPanes(frame.panes);
         setState(frame.state);
         setReady(true);
+        setConnection('online');
         return;
       }
       if (frame.type === 'created') {
@@ -36,8 +38,18 @@ export function useBisMind() {
         setPanes(prev => prev.map(p => (p.id === frame.paneId ? { ...p, status: frame.status, exitCode: frame.exitCode } : p)));
       }
     });
-    api<{ clis: Cli[] }>('/clis').then(data => setClis(data.clis)).catch(err => setError(String(err.message ?? err)));
-    api<CanvasState>('/state').then(setState).catch(() => {});
+    api<{ clis: Cli[] }>('/clis')
+      .then(data => setClis(data.clis))
+      .catch(err => {
+        setConnection('offline');
+        setError(`Pane server unreachable — start it with \`pnpm dev\` (${String(err.message ?? err)})`);
+      });
+    api<CanvasState>('/state')
+      .then(next => {
+        setState(next);
+        setConnection('online');
+      })
+      .catch(() => setConnection('offline'));
     return () => {
       off();
     };
@@ -47,9 +59,8 @@ export function useBisMind() {
 
   const spawn = useCallback(
     async (req: SpawnRequest) => {
-      const cols = focused ? 110 : 110;
       try {
-        const { pane } = await api<{ pane: Pane }>('/panes', { method: 'POST', body: { cols, rows: 30, ...req } });
+        const { pane } = await api<{ pane: Pane }>('/panes', { method: 'POST', body: { cols: 110, rows: 30, ...req } });
         setPanes(prev => (prev.some(p => p.id === pane.id) ? prev : [...prev, pane]));
         setFocusId(pane.id);
         if (req.parentId) {
@@ -108,8 +119,24 @@ export function useBisMind() {
     setState(prev => ({ ...prev, workspaces: prev.workspaces.filter(w => w.id !== id) }));
   }, []);
 
+  const retry = useCallback(async () => {
+    setConnection('connecting');
+    try {
+      const [cliData, nextState] = await Promise.all([api<{ clis: Cli[] }>('/clis'), api<CanvasState>('/state')]);
+      setClis(cliData.clis);
+      setState(nextState);
+      setConnection('online');
+      setReady(true);
+    } catch (err) {
+      setConnection('offline');
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
   return {
     ready,
+    connection,
+    retry,
     panes,
     clis,
     state,

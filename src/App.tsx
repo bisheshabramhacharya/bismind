@@ -40,14 +40,16 @@ export default function App() {
   const [addingWs, setAddingWs] = useState(false);
   const [toast, setToast] = useState('');
   const [dashboardOpen, setDashboardOpen] = useState(true);
+  const [activeWs, setActiveWs] = useState('');
 
   const workspaces = state.workspaces;
   const activeWorkspaceId = useMemo(() => {
+    if (activeWs && workspaces.some(w => w.id === activeWs)) return activeWs;
     const ofFocus = state.paneWorkspace[focusId];
     if (ofFocus && workspaces.some(w => w.id === ofFocus)) return ofFocus;
     const firstWithPanes = workspaces.find(w => panesOfWorkspace(panes, state, w.id).length > 0);
     return firstWithPanes?.id ?? workspaces[0]?.id ?? '';
-  }, [state, focusId, panes, workspaces]);
+  }, [activeWs, state, focusId, panes, workspaces]);
 
   useEffect(() => {
     if (bm.error) {
@@ -75,6 +77,12 @@ export default function App() {
 
   const availableClis = clis;
 
+  const focusPane = (id: string) => {
+    bm.setFocusId(id);
+    const owner = state.paneWorkspace[id] ?? workspaceForCwd(state, panes.find(p => p.id === id)?.cwd);
+    if (owner) setActiveWs(owner);
+  };
+
   const launch = async (cliId: string, options: { model?: string; provider?: string; prompt?: string } = {}) => {
     const ws = pickerWs ?? workspaces.find(w => w.id === activeWorkspaceId);
     const pane = await bm.spawn({
@@ -100,6 +108,7 @@ export default function App() {
       const ws = await bm.addWorkspace(path.replace(/^~/, '/Users/bishesha'));
       setNewPath('');
       setAddingWs(false);
+      setActiveWs(ws.id);
       setPickerWorkspace(ws.id);
     } catch (err) {
       setToast(err instanceof Error ? err.message : String(err));
@@ -245,8 +254,7 @@ export default function App() {
                       type="button"
                       title={workspace.path}
                       onClick={() => {
-                        bm.setFocusId('');
-                        bm.persist({});
+                        setActiveWs(workspace.id);
                         setPickerWorkspace(null);
                       }}
                     >
@@ -273,7 +281,7 @@ export default function App() {
                       pane={root}
                       panes={wsPanes}
                       active={focusId === root.id}
-                      onFocus={id => bm.setFocusId(id)}
+                      onFocus={focusPane}
                       onClose={id => bm.kill(id)}
                     />
                   ))}
@@ -291,7 +299,26 @@ export default function App() {
         </aside>
 
         <section className="bm-canvas" aria-label="Pane canvas">
-          {pickerOpen || workspacePanes.length === 0 ? (
+          {bm.connection !== 'online' ? (
+            <div className="bm-empty">
+              <svg className="bm-empty-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round">
+                <path d="M12 3v10M12 17.5v.5" />
+                <circle cx="12" cy="12" r="9" />
+              </svg>
+              <div className="bm-empty-copy">
+                <h3 className="bm-empty-title">Pane server {bm.connection === 'connecting' ? 'starting…' : 'offline'}</h3>
+                <p className="bm-empty-lead">
+                  The terminals live in the pane server, not the browser. Start it in the project folder:
+                </p>
+                <p className="bm-form-foot">
+                  <code>cd {bm.state.workspaces[0]?.path ?? '/Users/bishesha/Documents/BisMind'} &amp;&amp; pnpm dev</code>
+                </p>
+              </div>
+              <button className="bm-launch-card" type="button" onClick={() => void bm.retry()}>
+                <span className="bm-launch-name">Retry connection</span>
+              </button>
+            </div>
+          ) : pickerOpen || workspacePanes.length === 0 ? (
             <LaunchPicker
               title={pickerWs?.name ?? 'this workspace'}
               clis={availableClis}
@@ -318,7 +345,7 @@ export default function App() {
                   focused
                   fresh={bm.isFresh(pane.id)}
                   onDone={() => bm.clearFresh(pane.id)}
-                  onFocus={() => bm.setFocusId(pane.id)}
+                  onFocus={() => focusPane(pane.id)}
                   onMaximize={() => bm.setMaximized(null)}
                   onAdd={workspacePanes.length < 6 ? () => setPickerWorkspace(activeWorkspaceId) : undefined}
                   onClose={() => bm.kill(pane.id)}
@@ -338,7 +365,7 @@ export default function App() {
                     focused={pane.id === focusId || (column.length === 1 && workspacePanes.length === 1)}
                     fresh={bm.isFresh(pane.id)}
                     onDone={() => bm.clearFresh(pane.id)}
-                    onFocus={() => bm.setFocusId(pane.id)}
+                    onFocus={() => focusPane(pane.id)}
                     onMaximize={() => bm.setMaximized(pane.id === maximized ? null : pane.id)}
                     onAdd={workspacePanes.length < 6 ? () => setPickerWorkspace(activeWorkspaceId) : undefined}
                     onClose={() => bm.kill(pane.id)}
@@ -373,10 +400,7 @@ export default function App() {
                         data-on={focusId === pane.id}
                         type="button"
                         title={`${pane.title} — ${pane.cwd}`}
-                        onClick={() => {
-                          bm.setFocusId(pane.id);
-                          bm.assign(pane.id, state.paneWorkspace[pane.id] ?? workspaceForCwd(state, pane.cwd));
-                        }}
+                        onClick={() => focusPane(pane.id)}
                       >
                         <AgentMark cli={pane.cli} accent={pane.accent} className="bm-launch-mark" />
                         <span className="bm-row-label">
@@ -493,8 +517,11 @@ function LaunchPicker({
         <rect x="15" y="14" width="6" height="7" rx="1.5" />
       </svg>
       <div className="bm-empty-copy">
-        <h3 className="bm-empty-title">Start vibe coding in {title}</h3>
-        <p className="bm-empty-lead">Choose an agent to open a real terminal — headless when it can be, headed when you want to watch.</p>
+        <h3 className="bm-empty-title">Open an agent pane in {title}</h3>
+        <p className="bm-empty-lead">
+          Real CLI agents in real terminals. Pick one to start it in this folder, and any agent can open others as
+          sub-agents — visible panes, nested in the rail.
+        </p>
       </div>
 
       <div className="bm-model-row">
