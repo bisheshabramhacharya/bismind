@@ -75,14 +75,15 @@ export function Canvas({ onNew }: { onNew: () => void }) {
   const settings = useStore(s => s.settings);
   const agents = useStore(s => s.agents);
   const peeked = useStore(s => s.peeked);
+  const hidden = useStore(s => s.hidden);
   const maximizedId = useStore(s => s.maximizedId);
   if (!settings) return null;
   const ws = settings.workspaces.find(w => w.id === settings.activeWorkspace) ?? null;
   const inWs = agents.filter(a => workspaceOf(a, settings.workspaces, agents) === (ws?.id ?? null));
   const show = settings.ui.showSubagents;
-  const visibleSub = (a: Agent) => show || peeked.includes(a.id);
+  const shown = inWs.filter(a => !hidden.includes(a.id) && (a.role === 'main' || show || peeked.includes(a.id)));
 
-  const maxed = maximizedId ? inWs.find(a => a.id === maximizedId) : null;
+  const maxed = maximizedId ? shown.find(a => a.id === maximizedId) : null;
   if (maxed) {
     return (
       <div className="canvas">
@@ -91,13 +92,11 @@ export function Canvas({ onNew }: { onNew: () => void }) {
     );
   }
 
-  // Teams: each main agent with its (visible) sub-agents; orphans become their own team.
-  const ids = new Set(inWs.map(a => a.id));
-  const leaders = inWs.filter(a => !a.parentId || !ids.has(a.parentId));
-  const subsOf = (id: string): Agent[] => inWs.filter(a => a.parentId === id).flatMap(a => [a, ...subsOf(a.id)]);
-  const teams = leaders
-    .filter(a => a.role === 'main' || visibleSub(a))
-    .map(lead => ({ lead, subs: subsOf(lead.id).filter(visibleSub) }));
+  // Teams: each shown agent with its shown sub-agents; a sub-agent whose parent is hidden leads its own team.
+  const ids = new Set(shown.map(a => a.id));
+  const leaders = shown.filter(a => !a.parentId || !ids.has(a.parentId));
+  const subsOf = (id: string): Agent[] => shown.filter(a => a.parentId === id).flatMap(a => [a, ...subsOf(a.id)]);
+  const teams = leaders.map(lead => ({ lead, subs: subsOf(lead.id) }));
 
   if (!teams.length) {
     return (
@@ -107,7 +106,7 @@ export function Canvas({ onNew }: { onNew: () => void }) {
           <h2>Start vibe coding in {ws?.name ?? 'your home folder'}</h2>
           <p>Choose an agent to open a terminal.</p>
           <AgentPicker workspace={ws} />
-          <p className="empty-foot">{inWs.length ? `${inWs.length} sub-agent pane${inWs.length > 1 ? 's are' : ' is'} hidden (⌘J shows them).` : 'These run in real terminals over your own folders. Sub-agents use your mode: pick it in the dashboard.'}</p>
+          <p className="empty-foot">{inWs.length ? `${inWs.length} pane${inWs.length > 1 ? 's are' : ' is'} hidden and still running. Click one in the sidebar to bring it back (⌘J toggles sub-agents).` : 'These run in real terminals over your own folders. Sub-agents use your mode: pick it in the dashboard.'}</p>
         </div>
       </div>
     );

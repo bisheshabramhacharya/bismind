@@ -310,6 +310,29 @@ kbd {
   background: var(--active);
   color: var(--text);
 }
+.rail-agent {
+  cursor: pointer;
+}
+.rail-agent-hidden {
+  opacity: 0.5;
+}
+.rail-eye {
+  display: none;
+  color: var(--text-3);
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  place-items: center;
+  flex: none;
+}
+.rail-agent:hover .rail-eye,
+.rail-agent-hidden .rail-eye {
+  display: grid;
+}
+.rail-eye:hover {
+  background: var(--active);
+  color: var(--text);
+}
 .rail-agent-name {
   flex: 1;
   min-width: 0;
@@ -339,42 +362,12 @@ kbd {
   padding: 4px 6px;
   border-radius: 7px;
   text-align: left;
+  color: var(--text-2);
+  font-size: 12.5px;
 }
 .account:hover,
 .account.on {
   background: var(--hover);
-}
-.avatar {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: linear-gradient(145deg, #6b93ff, #3b63e0);
-  color: white;
-  font-size: 11px;
-  font-weight: 600;
-  display: grid;
-  place-items: center;
-  flex: none;
-}
-.account-name {
-  font-size: 12.5px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.account-sub {
-  font-size: 11px;
-  color: var(--text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.account-lines {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  line-height: 1.25;
 }
 
 .addws {
@@ -737,6 +730,10 @@ kbd {
   width: 100%;
   height: 100%;
 }
+.terminal-drop {
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
 .terminal .xterm-viewport {
   background: transparent !important;
 }
@@ -772,6 +769,9 @@ kbd {
   color: var(--text-3);
   font-size: 11px;
   white-space: nowrap;
+}
+.subtray-label:hover {
+  color: var(--text);
 }
 .subtray-chips {
   display: flex;

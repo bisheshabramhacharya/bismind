@@ -20,6 +20,9 @@ function TopBar() {
         </button>
       </div>
       <div className="topbar-group">
+        <button className={`icon-btn ${ui.showSubagents ? 'on' : ''}`} title={`${ui.showSubagents ? 'Hide' : 'Show'} sub-agent panes  ⌘J`} onClick={() => patchUi({ showSubagents: !ui.showSubagents })}>
+          <Icon.Agents size={16} />
+        </button>
         <button className="icon-btn" title={`Layout: ${ui.layout} → ${nextLayout}`} onClick={() => patchUi({ layout: nextLayout })}>
           <Icon.Grid size={16} />
         </button>
@@ -87,7 +90,7 @@ export function App() {
       <TopBar />
       {!connected && <div className="offline">Reconnecting to BisMind… your agents keep running.</div>}
       <main className={`main ${settings.ui.rail ? '' : 'no-rail'} ${settings.ui.dashboard ? '' : 'no-dash'}`}>
-        {settings.ui.rail && <Rail />}
+        {settings.ui.rail && <Rail onNew={() => setPicker(true)} />}
         <Canvas onNew={() => setPicker(true)} />
         {settings.ui.dashboard && <Dashboard />}
       </main>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, elapsed, getState, setState, shortModel, tildify, useStore } from '../lib/store';
+import { agentRef, api, dragAgent, elapsed, getState, patchUi, setHidden, setState, shortModel, tildify, useStore } from '../lib/store';
 import type { Agent } from '../lib/types';
 import { HarnessIcon, Icon } from './Icons';
 import { Terminal } from './Terminal';
@@ -31,23 +31,25 @@ export function useTick(active: boolean) {
 export function openSubagent(id: string) {
   const s = getState();
   const showing = s.settings?.ui.showSubagents ?? true;
+  setHidden(id, false);
   setState({ focusedId: id, peeked: showing || s.peeked.includes(id) ? s.peeked : [...s.peeked, id], maximizedId: null });
 }
 
 function SubTray({ parent }: { parent: Agent }) {
   const subs = useStore(s => s.agents.filter(a => a.parentId === parent.id));
   const focusedId = useStore(s => s.focusedId);
+  const showing = useStore(s => s.settings?.ui.showSubagents ?? true);
   useTick(subs.some(a => a.status === 'working' || a.status === 'starting'));
   if (!subs.length) return null;
   const running = subs.filter(a => ['starting', 'working'].includes(a.status)).length;
   return (
     <div className="subtray">
-      <span className="subtray-label">
-        <Icon.Agents size={13} /> {running ? `${running} running` : `${subs.length} sub-agent${subs.length > 1 ? 's' : ''}`}
-      </span>
+      <button className="subtray-label" title={`${showing ? 'Hide' : 'Show'} sub-agent panes  ⌘J`} onClick={() => patchUi({ showSubagents: !showing })}>
+        {showing ? <Icon.EyeOff size={13} /> : <Icon.Eye size={13} />} {running ? `${running} running` : `${subs.length} sub-agent${subs.length > 1 ? 's' : ''}`}
+      </button>
       <div className="subtray-chips">
         {subs.map(a => (
-          <button key={a.id} className={`chip ${focusedId === a.id ? 'chip-on' : ''}`} onClick={() => openSubagent(a.id)} title={a.task ?? ''}>
+          <button key={a.id} className={`chip ${focusedId === a.id ? 'chip-on' : ''}`} onClick={() => openSubagent(a.id)} title={a.task ?? ''} draggable onDragStart={e => dragAgent(e, a)}>
             <StatusDot status={a.status} />
             <span className="chip-name">{a.name}</span>
             <span className="chip-meta">
@@ -67,6 +69,9 @@ function Menu({ agent, onClose }: { agent: Agent; onClose: () => void }) {
   };
   return (
     <div className="menu" onMouseLeave={onClose}>
+      <button onClick={() => copy(agentRef(agent))}>
+        <Icon.Copy size={14} /> Copy @reference (or drag this pane into another terminal)
+      </button>
       <button onClick={() => copy(`bismind attach ${agent.name}`)}>
         <Icon.Copy size={14} /> Copy “attach in terminal” command
       </button>
@@ -117,7 +122,7 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
 
   return (
     <section className={`pane ${focused ? 'pane-focused' : ''} ${agent.role === 'sub' ? 'pane-sub' : ''}`} onMouseDown={focus}>
-      <header className="pane-head">
+      <header className="pane-head" draggable onDragStart={e => dragAgent(e, agent)} title="Drag into another terminal to reference this agent">
         <StatusDot status={agent.status} />
         <HarnessIcon id={agent.harness} size={14} />
         <span className="pane-title">{agent.role === 'sub' ? agent.name : tildify(agent.cwd).split('/').pop() || '~'}</span>
@@ -138,6 +143,9 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
         <div className="pane-actions">
           <button className="icon-btn" title="More" onClick={() => setMenu(m => !m)}>
             <Icon.More size={15} />
+          </button>
+          <button className="icon-btn" title="Hide pane (keeps running; bring it back from the sidebar)" onClick={() => setHidden(agent.id, true)}>
+            <Icon.EyeOff size={14} />
           </button>
           <button className="icon-btn" title={maximized ? 'Restore' : 'Maximize'} onClick={() => setState({ maximizedId: maximized ? null : agent.id, focusedId: agent.id })}>
             {maximized ? <Icon.Collapse size={13} /> : <Icon.Expand size={13} />}

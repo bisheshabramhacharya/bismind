@@ -2,7 +2,7 @@
  * One WebSocket to the BisMind server carries state pushes and terminal streams.
  * Components read state with useStore(); terminals subscribe per agent.
  */
-import { useRef, useSyncExternalStore } from 'react';
+import { type DragEvent, useRef, useSyncExternalStore } from 'react';
 import type { Agent, HarnessInfo, ModeInfo, Settings } from './types';
 
 const params = new URLSearchParams(location.search);
@@ -30,7 +30,19 @@ export interface State {
   maximizedId: string | null;
   /** Sub-agents the user opened while sub-agents are hidden. */
   peeked: string[];
+  /** Panes the user hid. The agents keep running; the sidebar brings them back. */
+  hidden: string[];
   seen: Record<string, number>;
+}
+
+const HIDDEN_KEY = 'bismind-hidden';
+function loadHidden(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? '[]');
+    return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 let state: State = {
@@ -44,6 +56,7 @@ let state: State = {
   focusedId: null,
   maximizedId: null,
   peeked: [],
+  hidden: loadHidden(),
   seen: {},
 };
 
@@ -57,6 +70,17 @@ export function setState(patch: Partial<State> | ((s: State) => Partial<State>))
 }
 export function getState() {
   return state;
+}
+
+/** Hide or show an agent's pane without touching the agent. */
+export function setHidden(id: string, hide: boolean) {
+  const hidden = hide ? [...new Set([...state.hidden, id])] : state.hidden.filter(h => h !== id);
+  setState(s => ({ hidden, maximizedId: hide && s.maximizedId === id ? null : s.maximizedId, focusedId: hide && s.focusedId === id ? null : s.focusedId }));
+  try {
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden));
+  } catch {
+    /* storage unavailable: hiding lasts until reload */
+  }
 }
 function shallowEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
@@ -203,6 +227,22 @@ export function elapsed(a: Agent, now = Date.now()): string {
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
   return m < 60 ? `${m}m ${String(s % 60).padStart(2, '0')}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+const HARNESS_LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', shell: 'Terminal' };
+
+/** A reference to an agent that any other agent (or a human) can follow with `bismind read <id>`. */
+export function agentRef(a: Agent): string {
+  const who = `${a.name}, ${HARNESS_LABELS[a.harness] ?? a.harness} ${a.role === 'sub' ? 'sub-agent' : 'agent'}`;
+  return `@bismind:${a.id} (${who}; read it: bismind read ${a.id}) `;
+}
+
+/** Drag an agent onto a terminal to drop its reference there. text/plain makes drops into outside terminals work too. */
+export const AGENT_DRAG_TYPE = 'application/x-bismind-agent';
+export function dragAgent(e: DragEvent, a: Agent) {
+  e.dataTransfer.setData(AGENT_DRAG_TYPE, a.id);
+  e.dataTransfer.setData('text/plain', agentRef(a));
+  e.dataTransfer.effectAllowed = 'copy';
 }
 
 export function shortModel(model: string | null): string | null {

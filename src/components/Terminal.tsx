@@ -2,8 +2,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal as XTerm } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { useEffect, useRef } from 'react';
-import { term, useStore } from '../lib/store';
+import { type DragEvent, useEffect, useRef, useState } from 'react';
+import { AGENT_DRAG_TYPE, term, useStore } from '../lib/store';
 
 const DARK = {
   background: '#141414',
@@ -65,6 +65,7 @@ export function Terminal({ agentId, focused, onFocus }: { agentId: string; focus
   const focusedRef = useRef(focused);
   focusedRef.current = focused;
   const theme = useStore(s => s.settings?.ui.theme ?? 'dark');
+  const [dropping, setDropping] = useState(false);
 
   useEffect(() => {
     const el = host.current!;
@@ -170,5 +171,29 @@ export function Terminal({ agentId, focused, onFocus }: { agentId: string; focus
     if (xtermRef.current) xtermRef.current.options.theme = theme === 'light' ? LIGHT : DARK;
   }, [theme]);
 
-  return <div className="terminal" ref={host} onMouseDown={onFocus} />;
+  // Another agent dragged here: paste its reference (as a paste, so harness prompts don't treat "@" as a keystroke).
+  const isAgentDrag = (e: DragEvent) => e.dataTransfer.types.includes(AGENT_DRAG_TYPE);
+  return (
+    <div
+      className={`terminal ${dropping ? 'terminal-drop' : ''}`}
+      ref={host}
+      onMouseDown={onFocus}
+      onDragOver={e => {
+        if (!isAgentDrag(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        setDropping(true);
+      }}
+      onDragLeave={() => setDropping(false)}
+      onDrop={e => {
+        setDropping(false);
+        if (!isAgentDrag(e)) return;
+        e.preventDefault();
+        if (e.dataTransfer.getData(AGENT_DRAG_TYPE) === agentId) return;
+        xtermRef.current?.paste(e.dataTransfer.getData('text/plain'));
+        onFocus();
+        xtermRef.current?.focus();
+      }}
+    />
+  );
 }

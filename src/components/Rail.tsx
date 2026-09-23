@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, patchSettings, patchUi, setState, useStore } from '../lib/store';
+import { api, dragAgent, patchSettings, patchUi, setHidden, setState, useStore } from '../lib/store';
 import type { Agent } from '../lib/types';
 import { workspaceOf } from './Canvas';
 import { HarnessIcon, Icon } from './Icons';
@@ -76,24 +76,47 @@ function labelFor(a: Agent): string {
   return `${LABELS[m[1] === 'terminal' ? 'shell' : m[1]]}${m[2] ? ` ${m[2]}` : ''}`;
 }
 
-function AgentRow({ agent, depth, all }: { agent: Agent; depth: number; all: Agent[] }) {
+function AgentRow({ agent, depth, all, wsId }: { agent: Agent; depth: number; all: Agent[]; wsId: string | null }) {
   const focused = useStore(s => s.focusedId === agent.id);
+  const hidden = useStore(s => s.hidden.includes(agent.id));
+  const activeWs = useStore(s => s.settings?.activeWorkspace ?? null);
   const kids = all.filter(a => a.parentId === agent.id);
+  const open = () => {
+    if (activeWs !== wsId) void patchSettings({ activeWorkspace: wsId });
+    if (agent.role === 'sub') return openSubagent(agent.id);
+    setHidden(agent.id, false);
+    setState({ focusedId: agent.id, maximizedId: null });
+  };
   return (
     <>
-      <button
-        className={`rail-agent ${focused ? 'on' : ''}`}
+      <div
+        role="button"
+        tabIndex={0}
+        className={`rail-agent ${focused ? 'on' : ''} ${hidden ? 'rail-agent-hidden' : ''}`}
         style={{ paddingLeft: 22 + depth * 14 }}
-        onClick={() => (agent.role === 'sub' ? openSubagent(agent.id) : setState({ focusedId: agent.id, maximizedId: null }))}
-        title={agent.task ?? agent.cwd}
+        onClick={open}
+        onKeyDown={e => e.key === 'Enter' && open()}
+        title={`${agent.task ?? agent.cwd}\n\nDrag into a terminal to reference this agent.`}
+        draggable
+        onDragStart={e => dragAgent(e, agent)}
       >
         <StatusDot status={agent.status} />
         {depth > 0 && <span className="rail-branch">↳</span>}
         <span className="rail-agent-name">{labelFor(agent)}</span>
         {agent.role === 'sub' && <HarnessIcon id={agent.harness} size={12} />}
-      </button>
+        <button
+          className="rail-eye"
+          title={hidden ? 'Show pane' : 'Hide pane (keeps running)'}
+          onClick={e => {
+            e.stopPropagation();
+            setHidden(agent.id, !hidden);
+          }}
+        >
+          {hidden ? <Icon.Eye size={12} /> : <Icon.EyeOff size={12} />}
+        </button>
+      </div>
       {kids.map(k => (
-        <AgentRow key={k.id} agent={k} depth={depth + 1} all={all} />
+        <AgentRow key={k.id} agent={k} depth={depth + 1} all={all} wsId={wsId} />
       ))}
     </>
   );
@@ -101,7 +124,6 @@ function AgentRow({ agent, depth, all }: { agent: Agent; depth: number; all: Age
 
 function Settings({ onClose }: { onClose: () => void }) {
   const settings = useStore(s => s.settings)!;
-  const [name, setName] = useState(settings.userName);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const off = (e: MouseEvent) => !box.current?.parentElement?.contains(e.target as Node) && onClose();
@@ -117,10 +139,6 @@ function Settings({ onClose }: { onClose: () => void }) {
   return (
     <div className="popover" ref={box}>
       <h4>Settings</h4>
-      <label className="setting">
-        <span className="setting-label">Your name</span>
-        <input className="field" value={name} onChange={e => setName(e.target.value)} onBlur={() => name.trim() && void patchSettings({ userName: name })} onKeyDown={e => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} />
-      </label>
       <div className="setting">
         <span className="setting-label">Appearance</span>
         <div className="seg">
@@ -167,7 +185,7 @@ function Settings({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function Rail() {
+export function Rail({ onNew }: { onNew: () => void }) {
   const settings = useStore(s => s.settings);
   const agents = useStore(s => s.agents);
   const [adding, setAdding] = useState(false);
@@ -201,6 +219,17 @@ export function Rail() {
             <div key={String(g.id)}>
               <div className={`rail-ws ${active ? 'on' : ''}`} onClick={() => void patchSettings({ activeWorkspace: g.id })} title={g.path}>
                 <span className="rail-ws-name">{g.name}</span>
+                <button
+                  className="rail-remove"
+                  title={`New agent in ${g.name}`}
+                  onClick={async e => {
+                    e.stopPropagation();
+                    if (!active) await patchSettings({ activeWorkspace: g.id });
+                    onNew();
+                  }}
+                >
+                  <Icon.Plus size={12} />
+                </button>
                 {g.id && (
                   <button
                     className="rail-remove"
@@ -226,7 +255,7 @@ export function Rail() {
                 )}
                 {live > 0 && <span className="count">{live}</span>}
               </div>
-              {open && roots.map(a => <AgentRow key={a.id} agent={a} depth={0} all={inWs} />)}
+              {open && roots.map(a => <AgentRow key={a.id} agent={a} depth={0} all={inWs} wsId={g.id} />)}
             </div>
           );
         })}
@@ -234,11 +263,8 @@ export function Rail() {
       <footer className="rail-foot">
         {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
         <button className={`account ${settingsOpen ? 'on' : ''}`} onClick={() => setSettingsOpen(o => !o)} title="Settings">
-          <span className="avatar">{settings.userName.slice(0, 1).toUpperCase()}</span>
-          <span className="account-lines">
-            <span className="account-name">{settings.userName}</span>
-            <span className="account-sub">Settings</span>
-          </span>
+          <Icon.Gear size={15} />
+          <span>Settings</span>
         </button>
         <button className="icon-btn" title={dark ? 'Light mode' : 'Dark mode'} onClick={() => patchUi({ theme: dark ? 'light' : 'dark' })}>
           {dark ? <Icon.Moon size={15} /> : <Icon.Sun size={15} />}
