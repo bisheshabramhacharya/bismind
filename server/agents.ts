@@ -117,13 +117,15 @@ export class Agents extends EventEmitter {
   private pendingWake = new Set<string>();
   private wakeTimers = new Map<string, NodeJS.Timeout>();
   private lastInputAt = new Map<string, number>();
+  /** Names picked by spawns that are still starting. */
+  private reserved = new Set<string>();
 
   async start() {
     for (const a of readJson<Agent[]>(REGISTRY_PATH, [])) this.agents.set(a.id, a);
     await this.reconcile();
     for (const a of this.agents.values()) if (!['exited', 'error'].includes(a.status)) this.attach(a.id);
     this.tick = setInterval(() => this.onTick(), 1000);
-    setInterval(() => void this.reconcile(), 4000);
+    setInterval(() => this.reconcile().catch(err => console.error('[agents] reconcile failed', err)), 4000);
   }
 
   list(): Agent[] {
@@ -145,7 +147,12 @@ export class Agents extends EventEmitter {
   }
 
   private save() {
-    writeJson(REGISTRY_PATH, this.list());
+    // A full disk or bad permissions must not take the server (and every agent's bookkeeping) down.
+    try {
+      writeJson(REGISTRY_PATH, this.list());
+    } catch (err) {
+      console.error('[agents] could not save the registry', err);
+    }
   }
 
   private update(id: string, patch: Partial<Agent>) {
@@ -188,16 +195,18 @@ export class Agents extends EventEmitter {
     this.activeWaits.set(parentId, (this.activeWaits.get(parentId) ?? 0) + 1);
   }
 
-  endWait(parentId: string) {
+  /** `delivered`: the wait returned its results. An aborted wait delivered nothing, so a pending wake still stands. */
+  endWait(parentId: string, delivered = true) {
     const n = (this.activeWaits.get(parentId) ?? 1) - 1;
     if (n <= 0) this.activeWaits.delete(parentId);
     else this.activeWaits.set(parentId, n);
-    this.pendingWake.delete(parentId); // it just received the results
+    if (delivered) this.pendingWake.delete(parentId);
+    else if (this.pendingWake.has(parentId)) this.scheduleWake(parentId, 1500);
   }
 
   private scheduleWake(parentId: string, delay: number) {
     clearTimeout(this.wakeTimers.get(parentId));
-    this.wakeTimers.set(parentId, setTimeout(() => void this.wake(parentId), delay));
+    this.wakeTimers.set(parentId, setTimeout(() => this.wake(parentId).catch(err => console.error('[agents] wake failed', err)), delay));
   }
 
   private async wake(parentId: string) {
@@ -225,7 +234,7 @@ export class Agents extends EventEmitter {
   }
 
   private uniqueName(base: string): string {
-    const taken = new Set(this.list().map(a => a.name));
+    const taken = new Set([...this.list().map(a => a.name), ...this.reserved]);
     if (!taken.has(base)) return base;
     for (let i = 2; ; i += 1) if (!taken.has(`${base}-${i}`)) return `${base}-${i}`;
   }
@@ -236,79 +245,91 @@ export class Agents extends EventEmitter {
     if (!existsSync(input.cwd) || !statSync(input.cwd).isDirectory()) throw new Error(`folder does not exist: ${input.cwd}`);
     const parent = input.parentId ? this.agents.get(input.parentId) ?? null : null;
     const id = randomBytes(3).toString('hex');
+    // Reserved until the agent is registered, so parallel spawns never pick the same name.
     const name = this.uniqueName(input.name?.trim() ? slug(input.name) : role === 'sub' && input.task ? slug(input.task) : h.id === 'shell' ? 'terminal' : h.id);
+    this.reserved.add(name);
     const agentDir = join(AGENTS_DIR, id);
     mkdirSync(agentDir, { recursive: true });
 
     let cwd = input.cwd;
     let worktree: Agent['worktree'] = null;
-    if (input.isolate) {
-      const repo = await git(cwd, ['rev-parse', '--show-toplevel']).catch(() => null);
-      if (!repo) throw new Error(`isolate needs a git repo, and ${cwd} is not in one`);
-      const branch = `bismind/${name}-${id}`;
-      const path = join(WORKTREES_DIR, id);
-      mkdirSync(WORKTREES_DIR, { recursive: true });
-      const base = await git(repo, ['rev-parse', 'HEAD']);
-      await git(repo, ['worktree', 'add', '-b', branch, path, base]);
-      worktree = { path, branch, repo, base };
-      cwd = join(path, relative(repo, input.cwd));
+    try {
+      if (input.isolate) {
+        const repo = await git(cwd, ['rev-parse', '--show-toplevel']).catch(() => null);
+        if (!repo) throw new Error(`isolate needs a git repo, and ${cwd} is not in one`);
+        const branch = `bismind/${name}-${id}`;
+        const path = join(WORKTREES_DIR, id);
+        mkdirSync(WORKTREES_DIR, { recursive: true });
+        const base = await git(repo, ['rev-parse', 'HEAD']);
+        await git(repo, ['worktree', 'add', '-b', branch, path, base]);
+        worktree = { path, branch, repo, base };
+        cwd = join(path, relative(repo, input.cwd));
+      }
+
+      const settings = readSettings();
+      const now = Date.now();
+      const agent: Agent = {
+        id,
+        name,
+        harness: h.id,
+        model: input.model ?? null,
+        thinking: input.thinking ?? null,
+        cwd,
+        workspaceId: input.workspaceId ?? parent?.workspaceId ?? null,
+        role,
+        parentId: parent?.id ?? null,
+        task: input.task ?? null,
+        status: 'starting',
+        result: null,
+        question: null,
+        progress: null,
+        exitCode: null,
+        turns: 0,
+        createdAt: now,
+        updatedAt: now,
+        workStartedAt: role === 'sub' ? now : null,
+        finishedAt: null,
+        worktree,
+        issue: input.issue ?? null,
+        reviewOf: input.reviewOf ?? null,
+        session: `bm-${id}`,
+      };
+
+      const script = writeLaunch({
+        id,
+        name,
+        harness: h.id,
+        role,
+        cwd,
+        model: agent.model,
+        thinking: agent.thinking,
+        task: agent.task,
+        parentLabel: parent ? `${parent.name}, running ${harnessLabel(parent.harness)}` : null,
+        worktree,
+        issue: input.issue ?? null,
+        agentDir,
+        orchestrate: settings.mode.harness !== 'native',
+      });
+
+      const cols = input.cols ?? 160;
+      const rows = input.rows ?? 48;
+      await tmux.newSession(agent.session, cwd, script, cols, rows);
+      this.agents.set(id, agent);
+      this.save();
+      this.attach(id, cols, rows);
+      this.emit('agent', { ...agent });
+      // The user picked this folder (a workspace, or a parent's cwd), so accept first-run trust gates.
+      void this.autoTrust(id);
+      return { ...agent };
+    } catch (err) {
+      // Don't leave a half-made agent behind in the user's repo.
+      rmSync(agentDir, { recursive: true, force: true });
+      const w = worktree as Agent['worktree'];
+      if (w) await git(w.repo, ['worktree', 'remove', '--force', w.path]).then(() => git(w.repo, ['branch', '-D', w.branch])).catch(() => undefined);
+      throw err;
+    } finally {
+      this.reserved.delete(name);
     }
-
-    const settings = readSettings();
-    const now = Date.now();
-    const agent: Agent = {
-      id,
-      name,
-      harness: h.id,
-      model: input.model ?? null,
-      thinking: input.thinking ?? null,
-      cwd,
-      workspaceId: input.workspaceId ?? parent?.workspaceId ?? null,
-      role,
-      parentId: parent?.id ?? null,
-      task: input.task ?? null,
-      status: 'starting',
-      result: null,
-      question: null,
-      progress: null,
-      exitCode: null,
-      turns: 0,
-      createdAt: now,
-      updatedAt: now,
-      workStartedAt: role === 'sub' ? now : null,
-      finishedAt: null,
-      worktree,
-      issue: input.issue ?? null,
-      reviewOf: input.reviewOf ?? null,
-      session: `bm-${id}`,
-    };
-
-    const script = writeLaunch({
-      id,
-      name,
-      harness: h.id,
-      role,
-      cwd,
-      model: agent.model,
-      thinking: agent.thinking,
-      task: agent.task,
-      parentLabel: parent ? `${parent.name}, running ${harnessLabel(parent.harness)}` : null,
-      worktree,
-      issue: input.issue ?? null,
-      agentDir,
-      orchestrate: settings.mode.harness !== 'native',
-    });
-
-    const cols = input.cols ?? 160;
-    const rows = input.rows ?? 48;
-    await tmux.newSession(agent.session, cwd, script, cols, rows);
-    this.agents.set(id, agent);
-    this.save();
-    this.attach(id, cols, rows);
-    this.emit('agent', { ...agent });
-    // The user picked this folder (a workspace, or a parent's cwd), so accept first-run trust gates.
-    void this.autoTrust(id);
-    return { ...agent };
   }
 
   /** Sub-agents open in folders the harness may never have seen; accept its "trust this folder?" gate. */
@@ -348,7 +369,7 @@ export class Agents extends EventEmitter {
     try {
       proc = pty.spawn(file, args, { name: 'xterm-256color', cols: live.cols, rows: live.rows, cwd: a.cwd, env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string> });
     } catch (err) {
-      console.error(`[agents] attach ${a.name} failed`, err);
+      console.error(`[agents] attach ${a.name} failed`, err); // onTick retries
       return;
     }
     live.proc = proc;
@@ -452,8 +473,12 @@ export class Agents extends EventEmitter {
   finish(id: string, report: string) {
     const a = this.agents.get(id);
     if (!a) throw new Error(`no agent ${id}`);
-    // The idle fallback may have settled it already; keep the real report.
-    if (a.status === 'done') return this.update(id, { result: report });
+    if (a.role !== 'sub' || ['exited', 'error'].includes(a.status)) throw new Error('only a running sub-agent can hand in a report');
+    // The idle fallback may have settled it already: the real report replaces the screen capture, never a real report.
+    if (a.status === 'done') {
+      if (a.result?.startsWith('[BisMind:')) this.update(id, { result: report });
+      return;
+    }
     this.update(id, { question: null });
     this.turnEnded(id, report);
   }
@@ -465,6 +490,7 @@ export class Agents extends EventEmitter {
   ask(id: string, question: string) {
     const a = this.agents.get(id);
     if (!a) throw new Error(`no agent ${id}`);
+    if (a.role !== 'sub' || ['exited', 'error'].includes(a.status)) throw new Error('only a running sub-agent can ask its parent');
     this.setStatus(id, 'waiting', { question });
     this.notify(this.agents.get(id)!, 'question');
   }
@@ -472,7 +498,7 @@ export class Agents extends EventEmitter {
   // ─── Waiting ─────────────────────────────────────────────────────────────────────
 
   /** Resolve when `until` is met for `ids`: all settled, or any settled. */
-  wait(ids: string[], until: 'all' | 'any', timeoutMs: number): Promise<{ timedOut: boolean; agents: Agent[] }> {
+  wait(ids: string[], until: 'all' | 'any', timeoutMs: number, signal?: AbortSignal): Promise<{ timedOut: boolean; agents: Agent[] }> {
     const check = () => {
       const agents = ids.map(id => this.agents.get(id)).filter((a): a is Agent => Boolean(a));
       const settled = agents.filter(a => SETTLED.includes(a.status));
@@ -496,6 +522,7 @@ export class Agents extends EventEmitter {
       const timer = setTimeout(() => finish(true), timeoutMs);
       this.on('agent', onChange);
       this.on('removed', onChange);
+      signal?.addEventListener('abort', () => finish(true), { once: true });
     });
   }
 
@@ -522,10 +549,23 @@ export class Agents extends EventEmitter {
   // ─── Status bookkeeping ───────────────────────────────────────────────────────────
 
   private onTick() {
+    try {
+      this.tickOnce();
+    } catch (err) {
+      console.error('[agents] tick failed', err);
+    }
+  }
+
+  private tickOnce() {
     const now = Date.now();
     for (const a of this.agents.values()) {
+      if (['exited', 'error'].includes(a.status)) continue;
       const live = this.live.get(a.id);
-      if (!live || ['exited', 'error'].includes(a.status)) continue;
+      // No terminal client (e.g. pty.spawn failed): keep trying, or the agent never leaves "starting".
+      if (!live?.proc) {
+        this.attach(a.id);
+        continue;
+      }
       const active = now - live.lastOutputAt < IDLE_AFTER_MS;
       const reportsTurns = harnesses().find(h => h.id === a.harness)?.reportsTurns ?? false;
       if (a.status === 'starting' && live.lastOutputAt) {
@@ -533,7 +573,7 @@ export class Agents extends EventEmitter {
         continue;
       }
       if (a.role === 'sub' && a.status === 'working' && live.lastOutputAt && now - live.lastOutputAt >= STALL_AFTER_MS) {
-        void this.settleFromScreen(a.id, true);
+        this.settleFromScreen(a.id, true).catch(err => console.error('[agents] settle failed', err));
         continue;
       }
       // Hook-reporting harnesses change state only on real signals (turn hooks, Enter, messages);
@@ -543,7 +583,7 @@ export class Agents extends EventEmitter {
       if (a.status === 'working' && !active) {
         if (a.role === 'sub' && a.harness === 'devin') {
           const started = now - (a.workStartedAt ?? a.createdAt) > 20_000;
-          if (started && now - live.lastOutputAt >= DEVIN_DONE_AFTER_MS) void this.settleFromScreen(a.id);
+          if (started && now - live.lastOutputAt >= DEVIN_DONE_AFTER_MS) this.settleFromScreen(a.id).catch(err => console.error('[agents] settle failed', err));
         } else this.setStatus(a.id, 'idle');
       } else if (a.status === 'idle' && active) this.setStatus(a.id, 'working');
     }
@@ -553,6 +593,8 @@ export class Agents extends EventEmitter {
     const a = this.agents.get(id);
     if (!a || a.status !== 'working') return;
     const screen = (await tmux.capture(a.session, 60).catch(() => '')).split('\n').slice(-40).join('\n').trim();
+    // A real signal (turn hook, `bismind done`) may have landed while the screen was captured.
+    if (this.agents.get(id)?.status !== 'working') return;
     const note = stalled
       ? `[BisMind: no activity for ${STALL_AFTER_MS / 1000}s, so this sub-agent may have errored or be stuck on a prompt. Its screen:]\n`
       : `[BisMind: ${harnessLabel(a.harness)} has no finish signal; this is the end of its screen:]\n`;

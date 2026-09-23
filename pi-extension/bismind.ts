@@ -55,6 +55,7 @@ export default function bismind(pi: ExtensionAPI) {
 
   let lastText: string | null = null;
   pi.on('agent_start', () => {
+    lastText = null; // a turn with no reply must not resend the previous report
     void api(`/api/agents/${AGENT_ID}/event`, { type: 'turn_start' }).catch(() => undefined);
   });
   pi.on('agent_end', event => {
@@ -92,12 +93,14 @@ export default function bismind(pi: ExtensionAPI) {
   // ── Push results back: long-poll BisMind for notices about this agent's children ──
   let running = false;
   let seq = 0;
+  // Notices from before this process started were handled by an earlier load (or are stale).
+  const loadedAt = Date.now();
   const loop = async () => {
     while (running) {
       try {
         const out = await api(`/api/notices?parent=${AGENT_ID}&after=${seq}&timeout=25000`, undefined, 35_000);
         seq = out.seq ?? seq;
-        const notices: { agentId: string; kind: string }[] = out.notices ?? [];
+        const notices: { agentId: string; kind: string; at: number }[] = (out.notices ?? []).filter((n: { at: number }) => n.at >= loadedAt);
         if (!notices.length) continue;
         const ids = [...new Set(notices.map(n => n.agentId))];
         const subs = await Promise.all(ids.map(id => api(`/api/agents/${id}`).catch(() => null)));

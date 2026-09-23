@@ -1,8 +1,8 @@
-import { useState } from 'react';
-import { api, setState, useStore } from '../lib/store';
+import { useEffect, useState } from 'react';
+import { api, getState, patchSettings, setHidden, setState, useStore } from '../lib/store';
 import type { Agent, HarnessId, Workspace } from '../lib/types';
 import { HarnessIcon, Icon } from './Icons';
-import { Pane } from './Pane';
+import { Pane, openSubagent } from './Pane';
 
 /** Agents started outside a workspace (e.g. from the CLI) belong to the workspace containing their folder. */
 export function workspaceOf(a: Agent, workspaces: Workspace[], agents: Agent[]): string | null {
@@ -13,6 +13,17 @@ export function workspaceOf(a: Agent, workspaces: Workspace[], agents: Agent[]):
   }
   const match = workspaces.filter(w => a.cwd === w.path || a.cwd.startsWith(`${w.path}/`)).sort((x, y) => y.path.length - x.path.length)[0];
   return match?.id ?? null;
+}
+
+/** Bring an agent's pane on screen from anywhere: switch to its workspace, unhide it, focus it. */
+export function showAgent(a: Agent) {
+  const s = getState();
+  if (!s.settings) return;
+  const ws = workspaceOf(a, s.settings.workspaces, s.agents);
+  if (s.settings.activeWorkspace !== ws) void patchSettings({ activeWorkspace: ws });
+  if (a.role === 'sub') return openSubagent(a.id);
+  setHidden(a.id, false);
+  setState({ focusedId: a.id, maximizedId: null });
 }
 
 const PICKS: { id: HarnessId; label: string }[] = [
@@ -61,6 +72,11 @@ export function AgentPicker({ workspace, onDone }: { workspace: Workspace | null
 }
 
 export function PickerModal({ workspace, onClose }: { workspace: Workspace | null; onClose: () => void }) {
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [onClose]);
   return (
     <div className="modal-scrim" onMouseDown={onClose}>
       <div className="modal" onMouseDown={e => e.stopPropagation()}>

@@ -21,7 +21,10 @@ const cfg = await import(join(REPO, 'server', 'config.ts'));
 const [command = 'open', ...rest] = process.argv.slice(2);
 const flags = {};
 const positionals = [];
-for (let i = 0; i < rest.length; i += 1) {
+// Messages are free text: `bismind send w use --force` must send all of it.
+const TEXT_COMMANDS = ['send', 'ask', 'done'];
+if (TEXT_COMMANDS.includes(command)) positionals.push(...rest);
+else for (let i = 0; i < rest.length; i += 1) {
   const a = rest[i];
   if (a.startsWith('--')) {
     const [k, v] = a.slice(2).split('=');
@@ -37,6 +40,12 @@ const c = {
   red: s => `\x1b[31m${s}\x1b[39m`,
   blue: s => `\x1b[34m${s}\x1b[39m`,
 };
+
+/** Report a usage error with a failing exit code, so scripts can tell. */
+function fail(message) {
+  console.error(message);
+  process.exitCode = 1;
+}
 
 async function client() {
   return import(join(REPO, 'server', 'client.ts'));
@@ -89,8 +98,9 @@ async function hook(kind) {
       await readStdin();
       const settings = cfg.readSettings();
       if (!id || settings.mode.harness === 'native') return;
-      const reason =
-        `Sub-agents in BisMind run on the user's sub-agent mode (${cfg.describeMode(settings.mode)}), not the built-in Agent/Task tool. ` +
+      const reason = process.env.BISMIND_ROLE === 'sub'
+        ? "You are a BisMind sub-agent, and sub-agents can't spawn sub-agents. Do this work yourself, or say what's needed in your report."
+        : `Sub-agents in BisMind run on the user's sub-agent mode (${cfg.describeMode(settings.mode)}), not the built-in Agent/Task tool. ` +
         'Use mcp__bismind__spawn_subagents with the same brief (one call for all parallel tasks), then mcp__bismind__wait_subagents.';
       process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
       return;
@@ -169,7 +179,12 @@ function tmuxBin() {
   return ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux'].find(p => existsSync(p)) ?? 'tmux';
 }
 
+const ORCHESTRATION = ['spawn', 'wait', 'send', 'kill'];
+
 async function main() {
+  if (process.env.BISMIND_ROLE === 'sub' && ORCHESTRATION.includes(command)) {
+    return fail(`bismind ${command} isn't available to sub-agents. Do the work yourself, or say what's needed in your report.`);
+  }
   switch (command) {
     case 'open':
     case 'app': {
@@ -253,7 +268,7 @@ async function main() {
     case 'attach': {
       const { api } = await client();
       const target = positionals[0];
-      if (!target) return console.error('usage: bismind attach <name|id>');
+      if (!target) return fail('usage: bismind attach <name|id>');
       const a = await api(`/api/agents/${encodeURIComponent(target)}`);
       const { agents } = await api('/api/state');
       const full = agents.find(x => x.id === a.id);
@@ -263,8 +278,8 @@ async function main() {
     case 'ask': {
       const id = process.env.BISMIND_AGENT_ID;
       const question = positionals.join(' ').trim();
-      if (!id) return console.error('bismind ask only works inside a BisMind sub-agent.');
-      if (!question) return console.error('usage: bismind ask "your question"');
+      if (!id) return fail('bismind ask only works inside a BisMind sub-agent.');
+      if (!question) return fail('usage: bismind ask "your question"');
       const { api } = await client();
       await api(`/api/agents/${id}/ask`, { body: { question } });
       console.log('Question sent to your parent agent. End your turn now; the answer will arrive as your next message.');
@@ -272,10 +287,10 @@ async function main() {
     }
     case 'done': {
       const id = process.env.BISMIND_AGENT_ID;
-      if (!id) return console.error('bismind done only works inside a BisMind sub-agent.');
+      if (!id) return fail('bismind done only works inside a BisMind sub-agent.');
       // The report comes as arguments or on stdin (a heredoc keeps multi-line reports intact).
       const report = (positionals.join(' ') || (await readStdin())).trim();
-      if (!report) return console.error("usage: bismind done \"report\"   or   bismind done <<'EOF' … EOF");
+      if (!report) return fail("usage: bismind done \"report\"   or   bismind done <<'EOF' … EOF");
       const { api } = await client();
       await api(`/api/agents/${id}/done`, { body: { report } });
       console.log('Report handed to your parent. You are done; end your turn.');
@@ -284,7 +299,7 @@ async function main() {
     case 'spawn': {
       const { api } = await client();
       const task = flags.task ?? positionals.join(' ');
-      if (!task) return console.error('usage: bismind spawn --task "brief" [--harness pi] [--model …] [--name …] [--isolate]');
+      if (!task) return fail('usage: bismind spawn --task "brief" [--harness pi] [--model …] [--name …] [--isolate]');
       const out = await api('/api/subagents', {
         body: {
           parentId: process.env.BISMIND_AGENT_ID ?? null,
@@ -307,14 +322,15 @@ async function main() {
       return;
     }
     case 'send': {
-      const { api } = await client();
       const [target, ...words] = positionals;
+      if (!target || !words.length) return fail('usage: bismind send <name|id> "message"');
+      const { api } = await client();
       await api(`/api/agents/${encodeURIComponent(target)}/message`, { body: { text: words.join(' ') } });
       return;
     }
     case 'read': {
       const { api } = await client();
-      if (!positionals[0]) return console.error('usage: bismind read <name|id> [--lines 120]');
+      if (!positionals[0]) return fail('usage: bismind read <name|id> [--lines 120]');
       const a = await api(`/api/agents/${encodeURIComponent(positionals[0])}/read?lines=${flags.lines ?? 120}`);
       const head = [`${a.name} (${a.id}) · ${a.harness}${a.model ? ` · ${a.model}` : ''} · ${a.role === 'sub' ? 'sub-agent' : 'main agent'} · ${a.status} · ${a.elapsed}`];
       head.push(`cwd: ${a.cwd}${a.branch ? `  branch: ${a.branch}` : ''}${a.parent ? `  parent: ${a.parent}` : ''}`);
@@ -325,6 +341,7 @@ async function main() {
       return;
     }
     case 'kill': {
+      if (!positionals[0]) return fail('usage: bismind kill <name|id>');
       const { api } = await client();
       await api(`/api/agents/${encodeURIComponent(positionals[0])}`, { method: 'DELETE' });
       return;

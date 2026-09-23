@@ -47,6 +47,17 @@ export function App() {
   }, [theme]);
 
   useEffect(() => {
+    // Dropping a file or text outside a terminal must not navigate the window away.
+    const stop = (e: DragEvent) => e.preventDefault();
+    window.addEventListener('dragover', stop);
+    window.addEventListener('drop', stop);
+    return () => {
+      window.removeEventListener('dragover', stop);
+      window.removeEventListener('drop', stop);
+    };
+  }, []);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey) return;
       const ui = getState().settings?.ui;

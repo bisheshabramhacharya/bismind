@@ -73,7 +73,14 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     const b = await body(req);
     const patch: Partial<Settings> = {};
     if (typeof b.modeSpec === 'string') patch.mode = parseModeSpec(b.modeSpec);
-    if (b.mode) patch.mode = b.mode;
+    if (b.mode && typeof b.mode === 'object') {
+      if (!['native', 'claude', 'codex', 'pi', 'devin'].includes(b.mode.harness)) throw new HttpError(400, 'mode.harness must be native, claude, codex, pi or devin');
+      patch.mode = {
+        harness: b.mode.harness,
+        model: typeof b.mode.model === 'string' && b.mode.model ? b.mode.model : null,
+        thinking: typeof b.mode.thinking === 'string' && b.mode.thinking ? b.mode.thinking : null,
+      };
+    }
     if (b.autonomy === 'full' || b.autonomy === 'ask') patch.autonomy = b.autonomy;
     if (b.ui) patch.ui = b.ui;
     if ('activeWorkspace' in b) patch.activeWorkspace = b.activeWorkspace;
@@ -224,7 +231,10 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
   if (path === '/api/wait' && method === 'POST') {
     const b = await body(req);
     const until = b.until === 'any' ? 'any' : 'all';
-    return send(res, 200, await waitFor(b.parentId ?? null, b.ids, until, clampTimeout(b.timeoutMs, 10 * 60_000)));
+    // A caller that gives up (timeout, Ctrl-C, a killed tool call) must not keep the parent marked as waiting.
+    const gone = new AbortController();
+    res.on('close', () => !res.writableEnded && gone.abort());
+    return send(res, 200, await waitFor(b.parentId ?? null, b.ids, until, clampTimeout(b.timeoutMs, 10 * 60_000), gone.signal));
   }
   if (path === '/api/notices' && method === 'GET') {
     const parent = url.searchParams.get('parent') ?? '';
@@ -254,12 +264,21 @@ function serveStatic(res: ServerResponse, pathname: string) {
   let file = normalize(join(DIST, pathname));
   if (!file.startsWith(DIST) || !existsSync(file) || statSync(file).isDirectory()) file = join(DIST, 'index.html');
   res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', 'cache-control': file.endsWith('index.html') ? 'no-cache' : 'max-age=31536000' });
-  createReadStream(file).pipe(res);
+  createReadStream(file)
+    .on('error', () => res.end())
+    .pipe(res);
 }
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${PORT}`);
-  if (!url.pathname.startsWith('/api/')) return serveStatic(res, url.pathname);
+  if (!url.pathname.startsWith('/api/')) {
+    try {
+      return serveStatic(res, url.pathname);
+    } catch {
+      if (!res.headersSent) res.writeHead(500);
+      return res.end();
+    }
+  }
   if (!authed(req, url)) return send(res, 401, { error: 'missing or wrong BisMind token' });
   try {
     await route(req, res, url);
@@ -342,6 +361,8 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 async function main() {
+  // One bad async path must not take every agent's bookkeeping down with it.
+  process.on('unhandledRejection', err => console.error('[bismind] unhandled rejection', err));
   if (!tmux.available) console.error('[bismind] tmux is not installed; run `brew install tmux`');
   writeTmuxConf();
   await agents.start();

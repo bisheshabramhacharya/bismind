@@ -129,6 +129,10 @@ const SUB_TOOLS = [
 ];
 
 async function callTool(name: string, args: Record<string, any>): Promise<unknown> {
+  // tools/list hides the other role's tools; enforce it too, since a client can call any name.
+  const subOnly = SUB_TOOLS.some(t => t.name === name);
+  if (IS_SUB && !subOnly) throw new Error(`sub-agents can't use ${name}; do the work yourself or say what's needed in your report`);
+  if (!IS_SUB && subOnly) throw new Error(`${name} is only for sub-agents`);
   switch (name) {
     case 'ask_parent':
       if (!PARENT) throw new Error('ask_parent only works inside a BisMind sub-agent');

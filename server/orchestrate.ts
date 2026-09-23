@@ -23,6 +23,7 @@ export async function spawnSubagents(parentId: string | null, tasks: TaskSpec[],
   if (!Array.isArray(tasks) || tasks.length === 0) throw new Error('tasks must be a non-empty array');
   if (tasks.length > 12) throw new Error('at most 12 sub-agents per call');
   const parent = parentId ? agents.get(parentId) : null;
+  if (parent?.role === 'sub') throw new Error("sub-agents can't spawn sub-agents; do the work yourself or say what's needed in your report");
   const mode = readSettings().mode;
   const defaultHarness: HarnessId = mode.harness === 'native' ? (parent?.harness ?? 'claude') : mode.harness;
   const results = await Promise.allSettled(
@@ -60,11 +61,16 @@ export function reviewable(parentId: string): Agent[] {
   return kids.filter(k => !k.reviewOf && k.worktree && k.status === 'done' && !reviewed.has(k.id));
 }
 
+/** Sub-agents whose reviewer is being spawned right now, so a double click can't start two. */
+const reviewing = new Set<string>();
+
 /** Spawn one read-only reviewer per finished sub-agent, on the user's review-agent settings. */
 export async function reviewSubagents(parentId: string, ids?: string[]) {
   const parent = agents.must(parentId);
-  const targets = ids?.length ? ids.map(id => agents.must(id)) : reviewable(parent.id);
-  if (!targets.length) return { spawned: [], note: 'Nothing to review: no finished sub-agents with a branch that are not reviewed yet.' };
+  if (parent.role === 'sub') throw new Error("sub-agents can't start reviews");
+  const targets = (ids?.length ? ids.map(id => agents.must(id)) : reviewable(parent.id)).filter(t => t.parentId === parent.id && !t.reviewOf && !reviewing.has(t.id));
+  if (!targets.length) return { spawned: [], note: 'Nothing to review: no finished sub-agents of yours with a branch that are not reviewed yet.' };
+  for (const t of targets) reviewing.add(t.id);
   const { mode, review } = readSettings();
   const sameAsMode = review.harness === 'mode';
   const harness: HarnessId = review.harness !== 'mode' ? review.harness : mode.harness === 'native' ? parent.harness : mode.harness;
@@ -83,7 +89,7 @@ export async function reviewSubagents(parentId: string, ids?: string[]) {
         reviewOf: t.id,
       });
     }),
-  );
+  ).finally(() => targets.forEach(t => reviewing.delete(t.id)));
   return {
     spawned: results.map((r, i) =>
       r.status === 'fulfilled'
@@ -119,7 +125,7 @@ export async function summarize(a: Agent, withTail: boolean) {
   return { ...base, recent_screen: tail.split('\n').slice(-25).join('\n') };
 }
 
-export async function waitFor(parentId: string | null, ids: string[] | undefined, until: 'all' | 'any', timeoutMs: number) {
+export async function waitFor(parentId: string | null, ids: string[] | undefined, until: 'all' | 'any', timeoutMs: number, signal?: AbortSignal) {
   // No ids: your children, or (outside BisMind, no parent) every parentless sub-agent still running.
   const targets = ids?.length
     ? ids.map(id => agents.must(id).id)
@@ -128,7 +134,7 @@ export async function waitFor(parentId: string | null, ids: string[] | undefined
       : agents.list().filter(a => a.role === 'sub' && !a.parentId && ['starting', 'working', 'idle'].includes(a.status)).map(a => a.id);
   if (!targets.length) return { timed_out: false, note: 'No sub-agents to wait for.', subagents: [] };
   if (parentId) agents.beginWait(parentId);
-  const { timedOut, agents: list } = await agents.wait(targets, until, timeoutMs).finally(() => parentId && agents.endWait(parentId));
+  const { timedOut, agents: list } = await agents.wait(targets, until, timeoutMs, signal).finally(() => parentId && agents.endWait(parentId, !signal?.aborted));
   const subagents = await Promise.all(list.map(a => summarize(a, true)));
   const waiting = list.filter(a => a.status === 'waiting');
   const running = list.filter(a => ['starting', 'working', 'idle'].includes(a.status));

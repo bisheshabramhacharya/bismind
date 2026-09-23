@@ -326,7 +326,9 @@ kbd {
   flex: none;
 }
 .rail-agent:hover .rail-eye,
-.rail-agent-hidden .rail-eye {
+.rail-agent:focus-within .rail-eye,
+.rail-agent-hidden .rail-eye,
+.rail-ws:focus-within .rail-remove {
   display: grid;
 }
 .rail-eye:hover {

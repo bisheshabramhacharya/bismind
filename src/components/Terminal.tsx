@@ -56,7 +56,7 @@ const LIGHT = {
 /** App shortcuts that must reach the window even while a terminal has focus. */
 export function isAppShortcut(e: KeyboardEvent): boolean {
   if (!e.metaKey) return false;
-  return ['b', 'j', 'k', 'e', '\\'].includes(e.key.toLowerCase());
+  return ['b', 'j', 'k'].includes(e.key.toLowerCase());
 }
 
 export function Terminal({ agentId, focused, onFocus }: { agentId: string; focused: boolean; onFocus: () => void }) {

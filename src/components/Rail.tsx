@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, dragAgent, patchSettings, patchUi, setHidden, setState, useStore } from '../lib/store';
+import { api, dragAgent, patchSettings, patchUi, setHidden, useStore } from '../lib/store';
 import type { Agent } from '../lib/types';
-import { workspaceOf } from './Canvas';
+import { showAgent, workspaceOf } from './Canvas';
 import { HarnessIcon, Icon } from './Icons';
-import { StatusDot, openSubagent } from './Pane';
+import { StatusDot } from './Pane';
 
 function AddWorkspace({ onDone }: { onDone: () => void }) {
   const [value, setValue] = useState('~/');
@@ -76,17 +76,11 @@ function labelFor(a: Agent): string {
   return `${LABELS[m[1] === 'terminal' ? 'shell' : m[1]]}${m[2] ? ` ${m[2]}` : ''}`;
 }
 
-function AgentRow({ agent, depth, all, wsId }: { agent: Agent; depth: number; all: Agent[]; wsId: string | null }) {
+function AgentRow({ agent, depth, all }: { agent: Agent; depth: number; all: Agent[] }) {
   const focused = useStore(s => s.focusedId === agent.id);
   const hidden = useStore(s => s.hidden.includes(agent.id));
-  const activeWs = useStore(s => s.settings?.activeWorkspace ?? null);
   const kids = all.filter(a => a.parentId === agent.id);
-  const open = () => {
-    if (activeWs !== wsId) void patchSettings({ activeWorkspace: wsId });
-    if (agent.role === 'sub') return openSubagent(agent.id);
-    setHidden(agent.id, false);
-    setState({ focusedId: agent.id, maximizedId: null });
-  };
+  const open = () => showAgent(agent);
   return (
     <>
       <div
@@ -95,7 +89,7 @@ function AgentRow({ agent, depth, all, wsId }: { agent: Agent; depth: number; al
         className={`rail-agent ${focused ? 'on' : ''} ${hidden ? 'rail-agent-hidden' : ''}`}
         style={{ paddingLeft: 22 + depth * 14 }}
         onClick={open}
-        onKeyDown={e => e.key === 'Enter' && open()}
+        onKeyDown={e => e.key === 'Enter' && e.target === e.currentTarget && open()}
         title={`${agent.task ?? agent.cwd}\n\nDrag into a terminal to reference this agent.`}
         draggable
         onDragStart={e => dragAgent(e, agent)}
@@ -116,7 +110,7 @@ function AgentRow({ agent, depth, all, wsId }: { agent: Agent; depth: number; al
         </button>
       </div>
       {kids.map(k => (
-        <AgentRow key={k.id} agent={k} depth={depth + 1} all={all} wsId={wsId} />
+        <AgentRow key={k.id} agent={k} depth={depth + 1} all={all} />
       ))}
     </>
   );
@@ -255,7 +249,7 @@ export function Rail({ onNew }: { onNew: () => void }) {
                 )}
                 {live > 0 && <span className="count">{live}</span>}
               </div>
-              {open && roots.map(a => <AgentRow key={a.id} agent={a} depth={0} all={inWs} wsId={g.id} />)}
+              {open && roots.map(a => <AgentRow key={a.id} agent={a} depth={0} all={inWs} />)}
             </div>
           );
         })}

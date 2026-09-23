@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, elapsed, patchSettings, patchUi, setState, shortModel, tildify, useStore } from '../lib/store';
+import { api, elapsed, getState, patchSettings, patchUi, shortModel, tildify, useStore } from '../lib/store';
 import type { Agent, ModelOption, ReviewAgent, SubagentMode } from '../lib/types';
 import { HarnessIcon, Icon } from './Icons';
-import { StatusDot, openSubagent, useTick } from './Pane';
+import { showAgent } from './Canvas';
+import { StatusDot, useTick } from './Pane';
 
 const HARNESSES: { id: SubagentMode['harness']; label: string }[] = [
   { id: 'pi', label: 'Pi' },
@@ -105,7 +106,8 @@ function ModeCard() {
   const [more, setMore] = useState(false);
   if (!settings) return null;
   const mode = settings.mode;
-  const set = (patch: Partial<SubagentMode>) => void patchSettings({ mode: { ...mode, ...patch } });
+  // Merge into the latest settings, not this render's, so two quick changes don't undo each other.
+  const set = (patch: Partial<SubagentMode>) => void patchSettings({ mode: { ...getState().settings!.mode, ...patch } });
   return (
     <div className="mode">
       <div className="mode-head">
@@ -218,6 +220,13 @@ function stateText(a: Agent): string {
 
 function Row({ agent, parent }: { agent: Agent; parent: Agent | null }) {
   const [open, setOpen] = useState(agent.status === 'waiting');
+  const [confirmClose, setConfirmClose] = useState(false);
+  useEffect(() => {
+    if (!confirmClose) return;
+    const t = setTimeout(() => setConfirmClose(false), 3000);
+    return () => clearTimeout(t);
+  }, [confirmClose]);
+  const running = !['exited', 'error'].includes(agent.status);
   useEffect(() => {
     if (agent.status === 'waiting') setOpen(true);
   }, [agent.status]);
@@ -268,9 +277,9 @@ function Row({ agent, parent }: { agent: Agent; parent: Agent | null }) {
           )}
           {!['exited', 'error'].includes(agent.status) && <Reply agent={agent} />}
           <div className="row-actions">
-            <button onClick={() => (sub ? openSubagent(agent.id) : setState({ focusedId: agent.id, maximizedId: null }))}>Open pane</button>
-            {!['exited', 'error'].includes(agent.status) && <button onClick={() => void api(`/api/agents/${agent.id}/stop`, { body: {} })}>Stop</button>}
-            <button onClick={() => void api(`/api/agents/${agent.id}`, { method: 'DELETE' })}>Close</button>
+            <button onClick={() => showAgent(agent)}>Open pane</button>
+            {running && <button onClick={() => void api(`/api/agents/${agent.id}/stop`, { body: {} })}>Stop</button>}
+            <button onClick={() => (running && !confirmClose ? setConfirmClose(true) : void api(`/api/agents/${agent.id}`, { method: 'DELETE' }))}>{confirmClose ? 'Close? It stops the agent' : 'Close'}</button>
           </div>
         </div>
       )}
@@ -284,7 +293,7 @@ function ReviewCard() {
   const [draft, setDraft] = useState<string | null>(null);
   if (!settings) return null;
   const review = settings.review;
-  const set = (patch: Partial<ReviewAgent>) => void patchSettings({ review: { ...review, ...patch } });
+  const set = (patch: Partial<ReviewAgent>) => void patchSettings({ review: { ...getState().settings!.review, ...patch } });
   const same = review.harness === 'mode';
   return (
     <div className="mode">

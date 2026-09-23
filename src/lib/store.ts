@@ -166,8 +166,8 @@ export function connect() {
     switch (msg.type) {
       case 'state':
         setState({ loaded: true, agents: msg.agents, settings: msg.settings, harnesses: msg.harnesses, mode: msg.mode, home: msg.home });
-        // Re-attach every terminal that is on screen after a reconnect.
-        for (const id of sinks.keys()) wsSend({ type: 'attach', id });
+        // Re-attach every terminal that is on screen after a reconnect, at the size it has.
+        for (const id of sinks.keys()) wsSend({ type: 'attach', id, ...sizes.get(id) });
         break;
       case 'settings':
         setState({ settings: msg.settings, mode: msg.mode });
@@ -180,7 +180,9 @@ export function connect() {
           agents: s.agents.filter(a => a.id !== msg.id),
           focusedId: s.focusedId === msg.id ? null : s.focusedId,
           maximizedId: s.maximizedId === msg.id ? null : s.maximizedId,
+          peeked: s.peeked.filter(id => id !== msg.id),
         }));
+        if (state.hidden.includes(msg.id)) setHidden(msg.id, false);
         break;
       case 'data':
         for (const sink of sinks.get(msg.id) ?? []) sink.write(msg.data);
@@ -192,8 +194,12 @@ export function connect() {
   };
 }
 
+/** Each terminal's last size, so a reconnect restores it instead of the server default. */
+const sizes = new Map<string, { cols: number; rows: number }>();
+
 export const term = {
   attach(id: string, sink: DataSink, cols: number, rows: number) {
+    sizes.set(id, { cols, rows });
     let set = sinks.get(id);
     if (!set) sinks.set(id, (set = new Set()));
     set.add(sink);
@@ -210,6 +216,7 @@ export const term = {
     wsSend({ type: 'input', id, data });
   },
   resize(id: string, cols: number, rows: number) {
+    sizes.set(id, { cols, rows });
     wsSend({ type: 'resize', id, cols, rows });
   },
 };
