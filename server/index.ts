@@ -165,6 +165,14 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     const id = seg[2];
     const action = seg[3];
     if (!action && method === 'GET') return send(res, 200, await summarize(agents.must(id), true));
+    if (!action && method === 'PATCH') {
+      const b = await body(req);
+      const patch: { title?: string | null; pinned?: boolean; archived?: boolean } = {};
+      if (typeof b.title === 'string') patch.title = b.title.trim().slice(0, 80) || null;
+      if (typeof b.pinned === 'boolean') patch.pinned = b.pinned;
+      if (typeof b.archived === 'boolean') patch.archived = b.archived;
+      return send(res, 200, agents.edit(id, patch));
+    }
     if (!action && method === 'DELETE') {
       await agents.kill(id);
       return send(res, 200, { ok: true });
@@ -197,7 +205,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     }
     if (action === 'event' && method === 'POST') {
       const b = await body(req);
-      if (b.type === 'turn_start') agents.turnStarted(id);
+      if (b.type === 'turn_start') agents.turnStarted(id, typeof b.prompt === 'string' ? b.prompt : undefined);
       else if (b.type === 'turn_end') agents.turnEnded(id, typeof b.message === 'string' ? b.message : null);
       return send(res, 200, { ok: true });
     }

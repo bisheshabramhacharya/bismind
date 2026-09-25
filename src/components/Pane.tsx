@@ -170,7 +170,8 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
       <header className="pane-head" draggable onDragStart={e => dragAgent(e, agent)} title="Drag into another terminal to reference this agent">
         <StatusDot status={agent.status} />
         <HarnessIcon id={agent.harness} size={14} />
-        <span className="pane-title">{agent.role === 'sub' ? agent.name : tildify(agent.cwd).split('/').pop() || '~'}</span>
+        <span className="pane-title">{agent.title || (agent.role === 'sub' ? agent.name : tildify(agent.cwd).split('/').pop() || '~')}</span>
+        {agent.title && agent.role !== 'sub' && <span className="pane-sub-meta">{tildify(agent.cwd).split('/').pop() || '~'}</span>}
         {agent.role === 'sub' ? (
           <span className="pane-sub-meta">
             ↳ {parent ? `from ${parent.name}` : 'sub-agent'}

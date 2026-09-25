@@ -107,14 +107,14 @@ async function hook(kind) {
     }
     case 'claude-prompt': {
       const raw = await readStdin();
-      await postEvent(id, { type: 'turn_start' });
-      // When the user mentions sub-agents, remind Claude how they work here (and the exact count rule).
       let prompt = '';
       try {
         prompt = JSON.parse(raw || '{}').prompt ?? '';
       } catch {
         /* ignore */
       }
+      await postEvent(id, { type: 'turn_start', prompt });
+      // When the user mentions sub-agents, remind Claude how they work here (and the exact count rule).
       const settings = cfg.readSettings();
       if (id && process.env.BISMIND_ROLE !== 'sub' && settings.mode.harness !== 'native' && /sub[- ]?agents?|subagents?|parallel agents|agents in parallel/i.test(prompt)) {
         const { subagentReminder } = await import(join(REPO, 'server', 'prompts.ts'));
