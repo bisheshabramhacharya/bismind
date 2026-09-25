@@ -399,7 +399,11 @@ export class Agents extends EventEmitter {
   }
 
   snapshot(id: string): string {
-    return this.live.get(id)?.ring ?? '';
+    const ring = this.live.get(id)?.ring;
+    if (!ring) return '';
+    // tmux enables the alternate screen and mouse reporting once, at attach; the ring has usually
+    // dropped those bytes. Without them xterm turns the wheel into ↑/↓ keys (prompt history).
+    return '\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h' + ring;
   }
 
   write(id: string, data: string) {
