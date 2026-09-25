@@ -125,7 +125,20 @@ export class Agents extends EventEmitter {
     await this.reconcile();
     for (const a of this.agents.values()) if (!['exited', 'error'].includes(a.status)) this.attach(a.id);
     this.tick = setInterval(() => this.onTick(), 1000);
-    setInterval(() => this.reconcile().catch(err => console.error('[agents] reconcile failed', err)), 4000);
+    this.scheduleReconcile(4000);
+  }
+
+  private reconcileTimer: NodeJS.Timeout | null = null;
+  private reconcileDelay = 4000;
+  /** Every 4s while an agent is running; backs off to 30s when all are settled. A pane's tmux client exiting reconciles at once. */
+  private scheduleReconcile(delay: number) {
+    if (this.reconcileTimer) clearTimeout(this.reconcileTimer);
+    this.reconcileDelay = delay;
+    this.reconcileTimer = setTimeout(async () => {
+      await this.reconcile().catch(err => console.error('[agents] reconcile failed', err));
+      const busy = [...this.agents.values()].some(a => ['starting', 'working'].includes(a.status));
+      this.scheduleReconcile(busy ? 4000 : Math.min(delay * 2, 30_000));
+    }, delay);
   }
 
   list(): Agent[] {
@@ -168,6 +181,7 @@ export class Agents extends EventEmitter {
     if (!a) return;
     if (a.status === status && Object.keys(patch).length === 0) return;
     const becameWorking = status === 'working' && a.status !== 'working';
+    if (['starting', 'working'].includes(status) && this.reconcileDelay > 4000) this.scheduleReconcile(4000);
     this.update(id, { ...patch, status, ...(becameWorking ? { workStartedAt: Date.now(), finishedAt: null } : {}) });
     if (SETTLED.includes(status)) {
       const live = this.live.get(id);
@@ -380,6 +394,7 @@ export class Agents extends EventEmitter {
     });
     proc.onExit(() => {
       live.proc = null;
+      this.scheduleReconcile(200);
     });
   }
 

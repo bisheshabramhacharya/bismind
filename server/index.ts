@@ -298,20 +298,26 @@ function broadcast(msg: unknown) {
   for (const ws of viewers.keys()) if (ws.readyState === ws.OPEN) ws.send(text);
 }
 
-// Coalesce terminal output per agent into ~60fps frames.
+// Coalesce terminal output per agent into ~60fps frames; flush early past 128 KB so bursts stay smooth.
+const FLUSH_LIMIT = 128 * 1024;
 const pending = new Map<string, string>();
+let pendingSize = 0;
 let flushTimer: NodeJS.Timeout | null = null;
+function flushData() {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = null;
+  for (const [aid, data] of pending) {
+    const text = JSON.stringify({ type: 'data', id: aid, data });
+    for (const [ws, subs] of viewers) if (subs.has(aid) && ws.readyState === ws.OPEN) ws.send(text);
+  }
+  pending.clear();
+  pendingSize = 0;
+}
 agents.on('data', ({ id, chunk }: { id: string; chunk: string }) => {
   pending.set(id, (pending.get(id) ?? '') + chunk);
-  if (!flushTimer)
-    flushTimer = setTimeout(() => {
-      flushTimer = null;
-      for (const [aid, data] of pending) {
-        const text = JSON.stringify({ type: 'data', id: aid, data });
-        for (const [ws, subs] of viewers) if (subs.has(aid) && ws.readyState === ws.OPEN) ws.send(text);
-      }
-      pending.clear();
-    }, 16);
+  pendingSize += chunk.length;
+  if (pendingSize >= FLUSH_LIMIT) flushData();
+  else if (!flushTimer) flushTimer = setTimeout(flushData, 16);
 });
 agents.on('agent', agent => broadcast({ type: 'agent', agent }));
 agents.on('removed', ({ id }) => broadcast({ type: 'removed', id }));

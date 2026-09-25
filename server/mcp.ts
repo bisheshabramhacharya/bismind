@@ -188,7 +188,7 @@ async function handle(msg: { id?: number | string | null; method: string; params
           result: {
             protocolVersion: params?.protocolVersion ?? '2025-06-18',
             capabilities: { tools: {} },
-            serverInfo: { name: 'bismind', version: '0.5.0' },
+            serverInfo: { name: 'bismind', version: '0.5.1' },
             instructions: IS_SUB
               ? 'You are a BisMind sub-agent. Use ask_parent when blocked on a decision only your parent can make; your final message is your report.'
               : "BisMind runs sub-agents on any harness (pi, Codex, Claude Code, Devin) in visible terminal panes, using the user's chosen sub-agent mode. Spawn independent tasks together with spawn_subagents, then wait_subagents.",

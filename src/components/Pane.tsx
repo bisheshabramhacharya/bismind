@@ -35,6 +35,12 @@ export function useTick(active: boolean) {
   }, [active]);
 }
 
+/** Ticks on its own so a running timer doesn't re-render the pane around it. */
+function Elapsed({ agent }: { agent: Agent }) {
+  useTick(['working', 'starting'].includes(agent.status));
+  return <>{elapsed(agent)}</>;
+}
+
 export function openSubagent(id: string) {
   const s = getState();
   const showing = s.settings?.ui.showSubagents ?? true;
@@ -143,7 +149,6 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
   const parent = useStore(s => (agent.parentId ? s.agents.find(a => a.id === agent.parentId) : null));
   const [menu, setMenu] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
-  useTick(agent.role === 'sub' && ['working', 'starting'].includes(agent.status));
 
   useEffect(() => {
     if (!confirmClose) return;
@@ -177,7 +182,7 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
         )}
         {agent.role === 'sub' && (
           <span className={`state state-${agent.status}`}>
-            {STATUS_LABEL[agent.status]} {elapsed(agent)}
+            {STATUS_LABEL[agent.status]} <Elapsed agent={agent} />
           </span>
         )}
         <div className="pane-actions">

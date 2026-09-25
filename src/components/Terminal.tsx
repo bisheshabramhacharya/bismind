@@ -1,8 +1,9 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal as XTerm } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { type DragEvent, useEffect, useRef, useState } from 'react';
+import { type DragEvent, memo, useEffect, useRef, useState } from 'react';
 import { AGENT_DRAG_TYPE, term, useStore } from '../lib/store';
 
 const DARK = {
@@ -59,7 +60,31 @@ export function isAppShortcut(e: KeyboardEvent): boolean {
   return ['b', 'j', 'k'].includes(e.key.toLowerCase());
 }
 
-export function Terminal({ agentId, focused, onFocus }: { agentId: string; focused: boolean; onFocus: () => void }) {
+/** Flush at once past this many queued chars, so a burst never becomes one huge, janky write. */
+const QUEUE_LIMIT = 256 * 1024;
+
+// Opt-in latency samples (queued → parsed by xterm): localStorage.setItem('bismind:terminal-perf', '1'), then read window.__bismindTerminalPerf.
+const perfOn = (() => {
+  try {
+    return localStorage.getItem('bismind:terminal-perf') === '1';
+  } catch {
+    return false;
+  }
+})();
+const perfSamples: { agentId: string; chars: number; latencyMs: number }[] = [];
+if (perfOn) (window as any).__bismindTerminalPerf = perfSamples;
+function sample(agentId: string, chars: number, queuedAt: number) {
+  perfSamples.push({ agentId, chars, latencyMs: performance.now() - queuedAt });
+  if (perfSamples.length > 200) perfSamples.shift();
+}
+
+// Re-rendered only when the agent or focus changes; onFocus is read through a ref.
+export const Terminal = memo(TerminalView, (a, b) => a.agentId === b.agentId && a.focused === b.focused);
+
+function TerminalView({ agentId, focused, onFocus: onFocusProp }: { agentId: string; focused: boolean; onFocus: () => void }) {
+  const onFocusRef = useRef(onFocusProp);
+  onFocusRef.current = onFocusProp;
+  const onFocus = () => onFocusRef.current();
   const host = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const focusedRef = useRef(focused);
@@ -87,6 +112,20 @@ export function Terminal({ agentId, focused, onFocus }: { agentId: string; focus
     xterm.loadAddon(new WebLinksAddon((_e, uri) => window.open(uri, '_blank', 'noopener')));
     xterm.open(el);
     xtermRef.current = xterm;
+    // GPU renderer; on context loss (e.g. too many panes) fall back to the default renderer.
+    let webgl: WebglAddon | null = null;
+    const glFrame = requestAnimationFrame(() => {
+      try {
+        webgl = new WebglAddon();
+        webgl.onContextLoss(() => {
+          webgl?.dispose();
+          webgl = null;
+        });
+        xterm.loadAddon(webgl);
+      } catch {
+        webgl = null;
+      }
+    });
     xterm.attachCustomKeyEventHandler(e => !isAppShortcut(e));
 
     const safeFit = () => {
@@ -103,26 +142,51 @@ export function Terminal({ agentId, focused, onFocus }: { agentId: string; focus
     // reach the agent as keystrokes. Mute input while a snapshot is being written.
     let replaying = false;
 
-    // Batch output: every frame for the focused pane, 4×/s for background panes.
+    // Batch output: every frame for the focused pane, 4×/s for background panes, nothing while the
+    // window is hidden. A hidden backlog past QUEUE_LIMIT is dropped and re-fetched as a snapshot.
     let queue = '';
+    let queuedAt = 0;
+    let stale = false;
     let timer: number | null = null;
-    const flush = () => {
+    const cancel = () => {
+      if (timer !== null) cancelAnimationFrame(timer), clearTimeout(timer);
       timer = null;
-      if (queue) {
-        xterm.write(queue);
-        queue = '';
-      }
     };
+    const flush = () => {
+      cancel();
+      if (!queue) return;
+      const data = queue;
+      const at = queuedAt;
+      queue = '';
+      xterm.write(data, perfOn ? () => sample(agentId, data.length, at) : undefined);
+    };
+    const onVisible = () => {
+      if (document.hidden) return;
+      if (stale) {
+        stale = false;
+        term.resync(agentId);
+      } else flush();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     const detach = term.attach(
       agentId,
       {
         write: data => {
+          if (stale) return;
+          if (!queue) queuedAt = performance.now();
           queue += data;
+          if (document.hidden) {
+            if (queue.length >= QUEUE_LIMIT) (stale = true), (queue = '');
+            return;
+          }
+          if (queue.length >= QUEUE_LIMIT) return flush();
           if (timer !== null) return;
           timer = focusedRef.current ? requestAnimationFrame(flush) : window.setTimeout(flush, 250);
         },
         reset: snapshot => {
+          cancel();
           queue = '';
+          stale = false;
           replaying = true;
           xterm.reset();
           xterm.write(snapshot, () => {
@@ -157,7 +221,10 @@ export function Terminal({ agentId, focused, onFocus }: { agentId: string; focus
       bin.dispose();
       resized.dispose();
       detach();
-      if (timer !== null) cancelAnimationFrame(timer), clearTimeout(timer);
+      cancel();
+      document.removeEventListener('visibilitychange', onVisible);
+      cancelAnimationFrame(glFrame);
+      webgl?.dispose();
       xterm.dispose();
       xtermRef.current = null;
     };

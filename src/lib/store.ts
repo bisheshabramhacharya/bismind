@@ -230,6 +230,10 @@ export const term = {
   input(id: string, data: string) {
     wsSend({ type: 'input', id, data });
   },
+  /** Ask for a fresh snapshot (after dropping output while hidden). */
+  resync(id: string) {
+    wsSend({ type: 'attach', id, ...sizes.get(id) });
+  },
   resize(id: string, cols: number, rows: number) {
     sizes.set(id, { cols, rows });
     wsSend({ type: 'resize', id, cols, rows });
