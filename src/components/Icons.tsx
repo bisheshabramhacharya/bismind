@@ -168,6 +168,12 @@ export const Icon = {
       <rect x="14" y="13.5" width="6" height="7" rx="1.6" />
     </svg>
   ),
+  Columns: (p: P) => (
+    <svg {...base(p)}>
+      <rect x="3.5" y="4" width="17" height="16" rx="1.8" />
+      <path d="M12 4v16" />
+    </svg>
+  ),
   Agents: (p: P) => (
     <svg {...base(p)}>
       <rect x="3.5" y="4" width="10" height="7" rx="1.6" />

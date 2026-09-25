@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, dragAgent, patchSettings, patchUi, setHidden, useStore } from '../lib/store';
+import { api, dragAgent, patchSettings, patchUi, setHidden, setPinned, useStore } from '../lib/store';
 import type { Agent } from '../lib/types';
 import { showAgent, workspaceOf } from './Canvas';
 import { HarnessIcon, Icon } from './Icons';
@@ -182,6 +182,7 @@ function Settings({ onClose }: { onClose: () => void }) {
 export function Rail({ onNew }: { onNew: () => void }) {
   const settings = useStore(s => s.settings);
   const agents = useStore(s => s.agents);
+  const pinned = useStore(s => s.pinned);
   const [adding, setAdding] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -224,6 +225,18 @@ export function Rail({ onNew }: { onNew: () => void }) {
                 >
                   <Icon.Plus size={12} />
                 </button>
+                {g.id && !active && (
+                  <button
+                    className={`rail-remove ${pinned.includes(g.id) ? 'rail-pinned' : ''}`}
+                    title={pinned.includes(g.id) ? 'Stop showing beside the current workspace' : 'Show beside the current workspace'}
+                    onClick={e => {
+                      e.stopPropagation();
+                      setPinned(g.id!, !pinned.includes(g.id!));
+                    }}
+                  >
+                    <Icon.Columns size={12} />
+                  </button>
+                )}
                 {g.id && (
                   <button
                     className="rail-remove"
