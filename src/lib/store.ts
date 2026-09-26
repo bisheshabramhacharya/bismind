@@ -32,13 +32,16 @@ export interface State {
   peeked: string[];
   /** Panes the user hid. The agents keep running; the sidebar brings them back. */
   hidden: string[];
+  /** Workspaces shown beside the active one, in the order added. */
+  pinned: string[];
   seen: Record<string, number>;
 }
 
 const HIDDEN_KEY = 'bismind-hidden';
-function loadHidden(): string[] {
+const PINNED_KEY = 'bismind-pinned';
+function loadList(key: string): string[] {
   try {
-    const v = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? '[]');
+    const v = JSON.parse(localStorage.getItem(key) ?? '[]');
     return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
   } catch {
     return [];
@@ -56,7 +59,8 @@ let state: State = {
   focusedId: null,
   maximizedId: null,
   peeked: [],
-  hidden: loadHidden(),
+  hidden: loadList(HIDDEN_KEY),
+  pinned: loadList(PINNED_KEY),
   seen: {},
 };
 
@@ -82,6 +86,17 @@ export function setHidden(id: string, hide: boolean) {
     /* storage unavailable: hiding lasts until reload */
   }
 }
+/** Show or stop showing a workspace beside the active one. */
+export function setPinned(id: string, pin: boolean) {
+  const pinned = pin ? [...new Set([...state.pinned, id])] : state.pinned.filter(p => p !== id);
+  setState({ pinned });
+  try {
+    localStorage.setItem(PINNED_KEY, JSON.stringify(pinned));
+  } catch {
+    /* storage unavailable: lasts until reload */
+  }
+}
+
 function shallowEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
@@ -214,6 +229,10 @@ export const term = {
   },
   input(id: string, data: string) {
     wsSend({ type: 'input', id, data });
+  },
+  /** Ask for a fresh snapshot (after dropping output while hidden). */
+  resync(id: string) {
+    wsSend({ type: 'attach', id, ...sizes.get(id) });
   },
   resize(id: string, cols: number, rows: number) {
     sizes.set(id, { cols, rows });

@@ -35,6 +35,12 @@ export function useTick(active: boolean) {
   }, [active]);
 }
 
+/** Ticks on its own so a running timer doesn't re-render the pane around it. */
+function Elapsed({ agent }: { agent: Agent }) {
+  useTick(['working', 'starting'].includes(agent.status));
+  return <>{elapsed(agent)}</>;
+}
+
 export function openSubagent(id: string) {
   const s = getState();
   const showing = s.settings?.ui.showSubagents ?? true;
@@ -143,7 +149,6 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
   const parent = useStore(s => (agent.parentId ? s.agents.find(a => a.id === agent.parentId) : null));
   const [menu, setMenu] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
-  useTick(agent.role === 'sub' && ['working', 'starting'].includes(agent.status));
 
   useEffect(() => {
     if (!confirmClose) return;
@@ -165,7 +170,8 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
       <header className="pane-head" draggable onDragStart={e => dragAgent(e, agent)} title="Drag into another terminal to reference this agent">
         <StatusDot status={agent.status} />
         <HarnessIcon id={agent.harness} size={14} />
-        <span className="pane-title">{agent.role === 'sub' ? agent.name : tildify(agent.cwd).split('/').pop() || '~'}</span>
+        <span className="pane-title">{agent.title || (agent.role === 'sub' ? agent.name : tildify(agent.cwd).split('/').pop() || '~')}</span>
+        {agent.title && agent.role !== 'sub' && <span className="pane-sub-meta">{tildify(agent.cwd).split('/').pop() || '~'}</span>}
         {agent.role === 'sub' ? (
           <span className="pane-sub-meta">
             ↳ {parent ? `from ${parent.name}` : 'sub-agent'}
@@ -177,7 +183,7 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
         )}
         {agent.role === 'sub' && (
           <span className={`state state-${agent.status}`}>
-            {STATUS_LABEL[agent.status]} {elapsed(agent)}
+            {STATUS_LABEL[agent.status]} <Elapsed agent={agent} />
           </span>
         )}
         <div className="pane-actions">

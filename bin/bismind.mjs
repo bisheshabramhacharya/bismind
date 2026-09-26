@@ -10,7 +10,7 @@
  *   …see `bismind help`
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -107,14 +107,14 @@ async function hook(kind) {
     }
     case 'claude-prompt': {
       const raw = await readStdin();
-      await postEvent(id, { type: 'turn_start' });
-      // When the user mentions sub-agents, remind Claude how they work here (and the exact count rule).
       let prompt = '';
       try {
         prompt = JSON.parse(raw || '{}').prompt ?? '';
       } catch {
         /* ignore */
       }
+      await postEvent(id, { type: 'turn_start', prompt });
+      // When the user mentions sub-agents, remind Claude how they work here (and the exact count rule).
       const settings = cfg.readSettings();
       if (id && process.env.BISMIND_ROLE !== 'sub' && settings.mode.harness !== 'native' && /sub[- ]?agents?|subagents?|parallel agents|agents in parallel/i.test(prompt)) {
         const { subagentReminder } = await import(join(REPO, 'server', 'prompts.ts'));
@@ -153,11 +153,40 @@ function appUrl(token) {
   return `${dev}/?t=${token}`;
 }
 
+/** Build the native macOS window (mac/BisMind.swift) into ~/.bismind/BisMind.app when missing or stale. */
+function nativeApp() {
+  const src = join(REPO, 'mac', 'BisMind.swift');
+  const app = join(cfg.DIR, 'BisMind.app');
+  const bin = join(app, 'Contents', 'MacOS', 'BisMind');
+  if (existsSync(bin) && statSync(bin).mtimeMs >= statSync(src).mtimeMs) return app;
+  mkdirSync(dirname(bin), { recursive: true });
+  writeFileSync(join(app, 'Contents', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>BisMind</string>
+<key>CFBundleIdentifier</key><string>com.bismind.app</string>
+<key>CFBundleExecutable</key><string>BisMind</string>
+<key>CFBundleIconFile</key><string>BisMind</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+</dict></plist>
+`);
+  const icon = join(REPO, 'mac', 'BisMind.icns');
+  if (existsSync(icon)) {
+    mkdirSync(join(app, 'Contents', 'Resources'), { recursive: true });
+    copyFileSync(icon, join(app, 'Contents', 'Resources', 'BisMind.icns'));
+  }
+  console.log('[bismind] building the Mac app once…');
+  const r = spawnSync('swiftc', ['-O', '-o', bin, src], { stdio: 'inherit' });
+  return r.status === 0 ? app : null;
+}
+
 function openWindow(url) {
-  const chromes = ['/Applications/Google Chrome.app', '/Applications/Arc.app', '/Applications/Brave Browser.app', '/Applications/Microsoft Edge.app'];
-  const app = chromes.find(p => existsSync(p));
-  if (process.platform === 'darwin' && app && !flags.browser) {
-    spawnSync('open', ['-na', app, '--args', `--app=${url}`], { stdio: 'ignore' });
+  const app = process.platform === 'darwin' && !flags.browser ? nativeApp() : null;
+  if (app) {
+    // One instance only: if it's already running, this just brings its window forward.
+    spawnSync('open', ['-a', app, '--args', url], { stdio: 'ignore' });
   } else {
     spawnSync(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { stdio: 'ignore' });
   }

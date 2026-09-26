@@ -12,6 +12,7 @@ import * as pty from 'node-pty';
 import { AGENTS_DIR, REGISTRY_PATH, WORKTREES_DIR, type HarnessId, readJson, readSettings, writeJson } from './config.ts';
 import { harness, harnessLabel, harnesses, writeLaunch } from './harnesses.ts';
 import { tmux } from './tmux.ts';
+import { generateTitle } from './titles.ts';
 
 export type AgentStatus = 'starting' | 'working' | 'idle' | 'done' | 'waiting' | 'exited' | 'error';
 
@@ -26,6 +27,11 @@ export interface Agent {
   role: 'main' | 'sub';
   parentId: string | null;
   task: string | null;
+  /** Short chat title from the first prompt (or task), written by a model. */
+  title?: string | null;
+  /** Sidebar state from the row menu. */
+  pinned?: boolean;
+  archived?: boolean;
   status: AgentStatus;
   result: string | null;
   question: string | null;
@@ -125,7 +131,26 @@ export class Agents extends EventEmitter {
     await this.reconcile();
     for (const a of this.agents.values()) if (!['exited', 'error'].includes(a.status)) this.attach(a.id);
     this.tick = setInterval(() => this.onTick(), 1000);
-    setInterval(() => this.reconcile().catch(err => console.error('[agents] reconcile failed', err)), 4000);
+    this.scheduleReconcile(4000);
+    // Agents from before titles existed: name them from what's on their screen.
+    for (const a of this.agents.values()) {
+      if (a.title || a.harness === 'shell' || ['exited', 'error'].includes(a.status)) continue;
+      if (a.task) this.nameFrom(a.id, a.task);
+      else void this.screen(a.id, 200).then(text => text.trim() && this.nameFrom(a.id, text)).catch(() => undefined);
+    }
+  }
+
+  private reconcileTimer: NodeJS.Timeout | null = null;
+  private reconcileDelay = 4000;
+  /** Every 4s while an agent is running; backs off to 30s when all are settled. A pane's tmux client exiting reconciles at once. */
+  private scheduleReconcile(delay: number) {
+    if (this.reconcileTimer) clearTimeout(this.reconcileTimer);
+    this.reconcileDelay = delay;
+    this.reconcileTimer = setTimeout(async () => {
+      await this.reconcile().catch(err => console.error('[agents] reconcile failed', err));
+      const busy = [...this.agents.values()].some(a => ['starting', 'working'].includes(a.status));
+      this.scheduleReconcile(busy ? 4000 : Math.min(delay * 2, 30_000));
+    }, delay);
   }
 
   list(): Agent[] {
@@ -168,6 +193,7 @@ export class Agents extends EventEmitter {
     if (!a) return;
     if (a.status === status && Object.keys(patch).length === 0) return;
     const becameWorking = status === 'working' && a.status !== 'working';
+    if (['starting', 'working'].includes(status) && this.reconcileDelay > 4000) this.scheduleReconcile(4000);
     this.update(id, { ...patch, status, ...(becameWorking ? { workStartedAt: Date.now(), finishedAt: null } : {}) });
     if (SETTLED.includes(status)) {
       const live = this.live.get(id);
@@ -318,6 +344,7 @@ export class Agents extends EventEmitter {
       this.save();
       this.attach(id, cols, rows);
       this.emit('agent', { ...agent });
+      if (agent.task) this.nameFrom(id, agent.task);
       // The user picked this folder (a workspace, or a parent's cwd), so accept first-run trust gates.
       void this.autoTrust(id);
       return { ...agent };
@@ -380,11 +407,16 @@ export class Agents extends EventEmitter {
     });
     proc.onExit(() => {
       live.proc = null;
+      this.scheduleReconcile(200);
     });
   }
 
   snapshot(id: string): string {
-    return this.live.get(id)?.ring ?? '';
+    const ring = this.live.get(id)?.ring;
+    if (!ring) return '';
+    // tmux enables the alternate screen and mouse reporting once, at attach; the ring has usually
+    // dropped those bytes. Without them xterm turns the wheel into ↑/↓ keys (prompt history).
+    return '\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h' + ring;
   }
 
   write(id: string, data: string) {
@@ -393,6 +425,7 @@ export class Agents extends EventEmitter {
     if (!a || !live?.proc) return;
     live.proc.write(data);
     this.lastInputAt.set(id, Date.now());
+    if (!a.title && a.harness !== 'shell') this.collectTyped(id, data);
     // A human pressing Enter in a settled agent's pane starts a new turn.
     if (data.includes('\r') && ['done', 'idle', 'waiting'].includes(a.status)) this.setStatus(id, 'working', { question: null });
   }
@@ -423,6 +456,13 @@ export class Agents extends EventEmitter {
     this.setStatus(a.id, 'working', { question: null });
   }
 
+  /** Row-menu edits: rename, pin, archive. A rename replaces the generated title. */
+  edit(idOrName: string, patch: { title?: string | null; pinned?: boolean; archived?: boolean }) {
+    const a = this.must(idOrName);
+    this.update(a.id, patch);
+    return { ...this.agents.get(a.id)! };
+  }
+
   async kill(idOrName: string) {
     const a = this.must(idOrName);
     // Closing an agent closes its whole team, newest first (reviewers before the workers they review).
@@ -450,9 +490,38 @@ export class Agents extends EventEmitter {
 
   // ─── Signals from hooks / extensions / the `bismind ask` shim ───────────────────────
 
-  turnStarted(id: string) {
+  turnStarted(id: string, prompt?: string) {
     const a = this.agents.get(id);
+    if (a && !a.title && prompt?.trim()) this.nameFrom(id, prompt);
     if (a && a.status !== 'working') this.setStatus(id, 'working', a.status === 'waiting' ? {} : { question: null });
+  }
+
+  /** What the user has typed since the last Enter, per untitled agent. Works for harnesses without a prompt hook. */
+  private typed = new Map<string, string>();
+  private collectTyped(id: string, data: string) {
+    let buf = this.typed.get(id) ?? '';
+    // Drop escape sequences (arrows, bracketed-paste markers), then apply backspaces.
+    for (const ch of data.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1b./g, '')) {
+      if (ch === '\r') {
+        if (buf.trim()) this.nameFrom(id, buf);
+        buf = '';
+      } else if (ch === '\x7f' || ch === '\b') buf = buf.slice(0, -1);
+      else if (ch >= ' ' || ch === '\n') buf += ch;
+    }
+    this.typed.set(id, buf.slice(-4000));
+  }
+
+  private titling = new Set<string>();
+  private nameFrom(id: string, text: string) {
+    if (this.titling.has(id)) return;
+    this.titling.add(id);
+    void generateTitle(text).then(title => {
+      this.titling.delete(id);
+      if (title && !/^new chat$/i.test(title) && this.agents.has(id)) {
+        this.update(id, { title });
+        this.typed.delete(id);
+      }
+    });
   }
 
   turnEnded(id: string, message: string | null) {

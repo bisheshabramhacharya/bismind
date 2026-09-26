@@ -285,6 +285,10 @@ kbd {
 .rail-ws:hover .rail-remove {
   display: grid;
 }
+.rail-remove.rail-pinned {
+  display: grid;
+  color: var(--blue);
+}
 .rail-remove:hover {
   background: var(--active);
   color: var(--text);
@@ -633,6 +637,46 @@ kbd {
 .canvas-grid {
   display: grid;
   grid-auto-rows: minmax(0, 1fr);
+}
+.canvas-split {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+}
+.split-col {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.split-col > .canvas {
+  flex: 1;
+}
+.split-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 4px 0 8px;
+  border-radius: 7px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.split-head.on {
+  background: var(--active);
+  color: var(--text);
+  font-weight: 600;
+  cursor: default;
+}
+.split-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .canvas-empty {
   display: grid;
@@ -1281,4 +1325,216 @@ kbd {
   height: 6px;
   border-radius: 50%;
   background: var(--amber);
+}
+
+/* ─── Rail rows: ported from Zeron (crates/ui/src/shell.rs, motion.rs, loaders.rs) ─ */
+.rail-list {
+  padding: 4px 6px 0;
+  gap: 2px;
+}
+.rail-ws {
+  height: 28px;
+  margin-top: 12px;
+  padding: 0 8px;
+  gap: 4px;
+  background: transparent;
+  color: var(--text-4);
+  font-size: 13px;
+  font-weight: 500;
+}
+.rail-list > div:first-child > .rail-ws {
+  margin-top: 0;
+}
+.rail-ws:hover,
+.rail-ws.on {
+  background: transparent;
+  color: var(--text-3);
+  font-weight: 500;
+}
+.rail-ws .rail-caret {
+  order: 99;
+  color: var(--text-4);
+  transition: transform 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+.rail-ws .count {
+  display: none;
+}
+.rail-agent {
+  height: 29px;
+  gap: 4px;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: color-mix(in srgb, var(--text) 80%, transparent);
+  font-size: 13px;
+  line-height: 17px;
+  font-weight: 400;
+  transition: background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1), color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: rail-in 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.rail-agent:hover {
+  background: rgba(235, 235, 235, 0.11);
+  color: var(--text);
+}
+.rail-agent.on {
+  background: rgba(255, 255, 255, 0.11);
+  color: var(--text);
+}
+:root[data-theme='light'] .rail-agent:hover {
+  background: rgba(26, 26, 26, 0.06);
+}
+:root[data-theme='light'] .rail-agent.on {
+  background: rgba(0, 0, 0, 0.06);
+}
+@keyframes rail-in {
+  from { opacity: 0; transform: translateY(4px); }
+}
+.rail-status {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+}
+.rail-check {
+  color: #34d399;
+  opacity: 0.9;
+}
+.rail-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+}
+:root[data-theme='light'] .rail-dot {
+  background: rgba(0, 0, 0, 0.14);
+}
+.rail-dot-waiting {
+  background: color-mix(in srgb, var(--blue) 60%, transparent);
+}
+.rail-dot-error {
+  background: color-mix(in srgb, var(--red) 65%, transparent);
+}
+/* 2×3 grid of 2px cells; brightness chases the ring every 750ms. */
+.rail-spin {
+  display: grid;
+  grid-template-columns: repeat(2, 2px);
+  gap: 1px;
+}
+.rail-spin i {
+  width: 2px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--blue);
+  animation: rail-gspin 0.75s linear infinite;
+}
+.rail-spin i:nth-child(-n + 2) { filter: brightness(1.35) saturate(0.72); }
+.rail-spin i:nth-child(n + 5) { filter: brightness(0.8); }
+@keyframes rail-gspin {
+  0% { opacity: 1; }
+  45% { opacity: 0.1; }
+  92% { opacity: 0.1; }
+  100% { opacity: 1; }
+}
+.rail-harness {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  opacity: 0.8;
+}
+.rail-agent-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+}
+.rail-char {
+  animation: rail-veil 0.16s cubic-bezier(0.3, 0.6, 0.6, 1);
+}
+@keyframes rail-veil {
+  from { opacity: 0; }
+}
+.rail-ago {
+  flex: none;
+  width: 30px;
+  text-align: right;
+  color: color-mix(in srgb, var(--text-2) 50%, transparent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.rail-agent:hover .rail-ago {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail-agent, .rail-char, .rail-spin i { animation: none; }
+}
+
+/* Row menu, after Zeron's chat menu: 216px popover, 16px icons. */
+.row-menu {
+  position: fixed;
+  z-index: 60;
+  width: 216px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--pop);
+  box-shadow: inset 0 0 0 1px var(--ring), var(--shadow);
+  display: flex;
+  flex-direction: column;
+  animation: row-menu-in 0.14s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+@keyframes row-menu-in {
+  from { opacity: 0; transform: translateY(-2px) scale(0.96); }
+}
+.row-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.row-menu button svg {
+  flex: none;
+  color: var(--text-3);
+}
+.row-menu button:hover {
+  background: var(--hover);
+}
+.row-menu .grow {
+  flex: 1;
+}
+.row-menu .flip {
+  transform: rotate(180deg);
+}
+.row-menu .danger,
+.row-menu .danger svg {
+  color: var(--red);
+}
+.row-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--ring-soft);
+}
+.rail-rename {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+  margin-left: -4px;
+  border: 0;
+  border-radius: 4px;
+  outline: 1px solid var(--focus);
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+}
+.rail-pin {
+  flex: none;
+  color: var(--text-4);
 }

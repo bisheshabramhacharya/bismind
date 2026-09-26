@@ -168,6 +168,12 @@ export const Icon = {
       <rect x="14" y="13.5" width="6" height="7" rx="1.6" />
     </svg>
   ),
+  Columns: (p: P) => (
+    <svg {...base(p)}>
+      <rect x="3.5" y="4" width="17" height="16" rx="1.8" />
+      <path d="M12 4v16" />
+    </svg>
+  ),
   Agents: (p: P) => (
     <svg {...base(p)}>
       <rect x="3.5" y="4" width="10" height="7" rx="1.6" />
@@ -212,6 +218,27 @@ export const Icon = {
   Folder: (p: P) => (
     <svg {...base(p)}>
       <path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />
+    </svg>
+  ),
+  Pen: (p: P) => (
+    <svg {...base(p)}>
+      <path d="M14.5 5.5l4 4M4.5 19.5l1-4.5L16 4.5a1.4 1.4 0 0 1 2 0l1.5 1.5a1.4 1.4 0 0 1 0 2L9 18.5z" />
+    </svg>
+  ),
+  Pin: (p: P) => (
+    <svg {...base(p)}>
+      <path d="M9 4.5h6M10 4.5v5l-3 3.5h10l-3-3.5v-5M12 13v6.5" />
+    </svg>
+  ),
+  Archive: (p: P) => (
+    <svg {...base(p)}>
+      <rect x="3.5" y="5" width="17" height="4" rx="1" />
+      <path d="M5 9v9a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 18V9M10 13h4" />
+    </svg>
+  ),
+  Trash: (p: P) => (
+    <svg {...base(p)}>
+      <path d="M4.5 7h15M9.5 7V5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2M6.5 7l.8 11.5a1.5 1.5 0 0 0 1.5 1.5h6.4a1.5 1.5 0 0 0 1.5-1.5L17.5 7" />
     </svg>
   ),
   Copy: (p: P) => (

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, getState, patchSettings, setHidden, setState, useStore } from '../lib/store';
+import { api, getState, patchSettings, setHidden, setPinned, setState, useStore } from '../lib/store';
 import type { Agent, HarnessId, Workspace } from '../lib/types';
 import { HarnessIcon, Icon } from './Icons';
 import { Pane, openSubagent } from './Pane';
@@ -20,7 +20,7 @@ export function showAgent(a: Agent) {
   const s = getState();
   if (!s.settings) return;
   const ws = workspaceOf(a, s.settings.workspaces, s.agents);
-  if (s.settings.activeWorkspace !== ws) void patchSettings({ activeWorkspace: ws });
+  if (s.settings.activeWorkspace !== ws && !(ws && s.pinned.includes(ws))) void patchSettings({ activeWorkspace: ws });
   if (a.role === 'sub') return openSubagent(a.id);
   setHidden(a.id, false);
   setState({ focusedId: a.id, maximizedId: null });
@@ -89,12 +89,61 @@ export function PickerModal({ workspace, onClose }: { workspace: Workspace | nul
 
 export function Canvas({ onNew }: { onNew: () => void }) {
   const settings = useStore(s => s.settings);
+  const pinned = useStore(s => s.pinned);
+  const maximizedId = useStore(s => s.maximizedId);
+  const agents = useStore(s => s.agents);
+  if (!settings) return null;
+  const active = settings.workspaces.find(w => w.id === settings.activeWorkspace) ?? null;
+  const beside = pinned.flatMap(id => settings.workspaces.filter(w => w.id === id && w.id !== active?.id));
+  if (!beside.length) return <WorkspaceCanvas ws={active} onNew={onNew} />;
+
+  const maxed = maximizedId ? agents.find(a => a.id === maximizedId) : null;
+  if (maxed) {
+    return (
+      <div className="canvas">
+        <Pane key={maxed.id} agent={maxed} onNew={onNew} />
+      </div>
+    );
+  }
+  const newIn = async (ws: Workspace | null) => {
+    if (settings.activeWorkspace !== (ws?.id ?? null)) await patchSettings({ activeWorkspace: ws?.id ?? null });
+    onNew();
+  };
+  // Closing the active column hands focus to the next one.
+  const close = (ws: Workspace | null) => {
+    if (ws !== active) return setPinned(ws!.id, false);
+    if (active) setPinned(active.id, false);
+    setPinned(beside[0].id, false);
+    void patchSettings({ activeWorkspace: beside[0].id });
+  };
+  return (
+    <div className="canvas-split" style={{ gridTemplateColumns: `repeat(${beside.length + 1}, minmax(0, 1fr))` }}>
+      {[active, ...beside].map(ws => (
+        <section key={ws?.id ?? 'home'} className="split-col">
+          <header className={`split-head ${ws === active ? 'on' : ''}`} title={ws?.path ?? '~'} onClick={() => ws !== active && void patchSettings({ activeWorkspace: ws?.id ?? null })}>
+            <span className="split-name">{ws?.name ?? 'Home'}</span>
+            <button className="icon-btn" title={`New agent in ${ws?.name ?? 'home'}`} onClick={e => (e.stopPropagation(), void newIn(ws))}>
+              <Icon.Plus size={13} />
+            </button>
+            {(ws !== active || beside.length > 0) && (
+              <button className="icon-btn" title="Stop showing here" onClick={e => (e.stopPropagation(), close(ws))}>
+                <Icon.Close size={11} />
+              </button>
+            )}
+          </header>
+          <WorkspaceCanvas ws={ws} onNew={onNew} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function WorkspaceCanvas({ ws, onNew }: { ws: Workspace | null; onNew: () => void }) {
+  const settings = useStore(s => s.settings)!;
   const agents = useStore(s => s.agents);
   const peeked = useStore(s => s.peeked);
   const hidden = useStore(s => s.hidden);
   const maximizedId = useStore(s => s.maximizedId);
-  if (!settings) return null;
-  const ws = settings.workspaces.find(w => w.id === settings.activeWorkspace) ?? null;
   const inWs = agents.filter(a => workspaceOf(a, settings.workspaces, agents) === (ws?.id ?? null));
   const show = settings.ui.showSubagents;
   const shown = inWs.filter(a => !hidden.includes(a.id) && (a.role === 'main' || show || peeked.includes(a.id)));

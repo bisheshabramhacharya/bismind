@@ -165,6 +165,14 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     const id = seg[2];
     const action = seg[3];
     if (!action && method === 'GET') return send(res, 200, await summarize(agents.must(id), true));
+    if (!action && method === 'PATCH') {
+      const b = await body(req);
+      const patch: { title?: string | null; pinned?: boolean; archived?: boolean } = {};
+      if (typeof b.title === 'string') patch.title = b.title.trim().slice(0, 80) || null;
+      if (typeof b.pinned === 'boolean') patch.pinned = b.pinned;
+      if (typeof b.archived === 'boolean') patch.archived = b.archived;
+      return send(res, 200, agents.edit(id, patch));
+    }
     if (!action && method === 'DELETE') {
       await agents.kill(id);
       return send(res, 200, { ok: true });
@@ -197,7 +205,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     }
     if (action === 'event' && method === 'POST') {
       const b = await body(req);
-      if (b.type === 'turn_start') agents.turnStarted(id);
+      if (b.type === 'turn_start') agents.turnStarted(id, typeof b.prompt === 'string' ? b.prompt : undefined);
       else if (b.type === 'turn_end') agents.turnEnded(id, typeof b.message === 'string' ? b.message : null);
       return send(res, 200, { ok: true });
     }
@@ -298,20 +306,26 @@ function broadcast(msg: unknown) {
   for (const ws of viewers.keys()) if (ws.readyState === ws.OPEN) ws.send(text);
 }
 
-// Coalesce terminal output per agent into ~60fps frames.
+// Coalesce terminal output per agent into ~60fps frames; flush early past 128 KB so bursts stay smooth.
+const FLUSH_LIMIT = 128 * 1024;
 const pending = new Map<string, string>();
+let pendingSize = 0;
 let flushTimer: NodeJS.Timeout | null = null;
+function flushData() {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = null;
+  for (const [aid, data] of pending) {
+    const text = JSON.stringify({ type: 'data', id: aid, data });
+    for (const [ws, subs] of viewers) if (subs.has(aid) && ws.readyState === ws.OPEN) ws.send(text);
+  }
+  pending.clear();
+  pendingSize = 0;
+}
 agents.on('data', ({ id, chunk }: { id: string; chunk: string }) => {
   pending.set(id, (pending.get(id) ?? '') + chunk);
-  if (!flushTimer)
-    flushTimer = setTimeout(() => {
-      flushTimer = null;
-      for (const [aid, data] of pending) {
-        const text = JSON.stringify({ type: 'data', id: aid, data });
-        for (const [ws, subs] of viewers) if (subs.has(aid) && ws.readyState === ws.OPEN) ws.send(text);
-      }
-      pending.clear();
-    }, 16);
+  pendingSize += chunk.length;
+  if (pendingSize >= FLUSH_LIMIT) flushData();
+  else if (!flushTimer) flushTimer = setTimeout(flushData, 16);
 });
 agents.on('agent', agent => broadcast({ type: 'agent', agent }));
 agents.on('removed', ({ id }) => broadcast({ type: 'removed', id }));

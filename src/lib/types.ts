@@ -12,6 +12,9 @@ export interface Agent {
   role: 'main' | 'sub';
   parentId: string | null;
   task: string | null;
+  title?: string | null;
+  pinned?: boolean;
+  archived?: boolean;
   status: AgentStatus;
   result: string | null;
   question: string | null;
