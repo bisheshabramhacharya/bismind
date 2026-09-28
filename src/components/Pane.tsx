@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
-import { agentRef, api, dragAgent, elapsed, getState, patchUi, setHidden, setState, shortModel, tildify, useStore } from '../lib/store';
+import { useCallback, useRef, useState } from 'react';
+import { isEnded, isRunning } from '../lib/agents';
+import { useConfirm, useDismiss, useTick } from '../lib/hooks';
+import { agentRef, api, dragAgent, elapsed, folderName, getState, patchUi, setHidden, setState, shortModel, useStore } from '../lib/store';
 import type { Agent } from '../lib/types';
 import { HarnessIcon, Icon } from './Icons';
 import { Terminal } from './Terminal';
@@ -26,19 +28,9 @@ export function StatusDot({ status }: { status: Agent['status'] }) {
   );
 }
 
-/** Re-render every second while something is running, so timers tick. */
-export function useTick(active: boolean) {
-  const [, set] = useState(0);
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => set(n => n + 1), 1000);
-    return () => clearInterval(t);
-  }, [active]);
-}
-
 /** Ticks on its own so a running timer doesn't re-render the pane around it. */
 function Elapsed({ agent }: { agent: Agent }) {
-  useTick(['working', 'starting'].includes(agent.status));
+  useTick(isRunning(agent));
   return <>{elapsed(agent)}</>;
 }
 
@@ -61,9 +53,9 @@ function SubTray({ parent }: { parent: Agent }) {
   const focusedId = useStore(s => s.focusedId);
   const showing = useStore(s => s.settings?.ui.showSubagents ?? true);
   const [reviewing, setReviewing] = useState<string | null>(null);
-  useTick(subs.some(a => a.status === 'working' || a.status === 'starting'));
+  useTick(subs.some(isRunning));
   if (!subs.length) return null;
-  const running = subs.filter(a => ['starting', 'working'].includes(a.status)).length;
+  const running = subs.filter(isRunning).length;
   // Same rule as the server: finished, has its own branch, not a reviewer, not reviewed yet.
   const toReview = subs.filter(k => !k.reviewOf && k.worktree && k.status === 'done' && !subs.some(r => r.reviewOf === k.id));
   const review = async () => {
@@ -115,7 +107,7 @@ function Menu({ agent, onClose }: { agent: Agent; onClose: () => void }) {
     onClose();
   };
   return (
-    <div className="menu" onMouseLeave={onClose}>
+    <div className="menu">
       <button onClick={() => copy(agentRef(agent))}>
         <Icon.Copy size={14} /> Copy @reference (or drag this pane into another terminal)
       </button>
@@ -130,7 +122,7 @@ function Menu({ agent, onClose }: { agent: Agent; onClose: () => void }) {
           <Icon.Branch size={14} /> Copy branch {agent.worktree.branch}
         </button>
       )}
-      {!['exited', 'error'].includes(agent.status) && (
+      {!isEnded(agent) && (
         <button
           onClick={() => {
             void api(`/api/agents/${agent.id}/stop`, { body: {} });
@@ -149,19 +141,17 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
   const maximized = useStore(s => s.maximizedId === agent.id);
   const parent = useStore(s => (agent.parentId ? s.agents.find(a => a.id === agent.parentId) : null));
   const [menu, setMenu] = useState(false);
-  const [confirmClose, setConfirmClose] = useState(false);
-
-  useEffect(() => {
-    if (!confirmClose) return;
-    const t = setTimeout(() => setConfirmClose(false), 3000);
-    return () => clearTimeout(t);
-  }, [confirmClose]);
+  // The ⋯ button and its menu: a click anywhere else (or Escape) closes the menu; the button toggles it.
+  const more = useRef<HTMLSpanElement>(null);
+  const closeMenu = useCallback(() => setMenu(false), []);
+  useDismiss(more, closeMenu, menu);
+  const [confirmClose, setConfirmClose] = useConfirm();
 
   const focus = () => {
     if (!focused) setState({ focusedId: agent.id });
   };
   const close = () => {
-    if (!confirmClose && !['exited', 'error'].includes(agent.status)) return setConfirmClose(true);
+    if (!confirmClose && !isEnded(agent)) return setConfirmClose(true);
     void api(`/api/agents/${agent.id}`, { method: 'DELETE' });
   };
   const model = shortModel(agent.model);
@@ -171,8 +161,10 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
       <header className="pane-head" draggable onDragStart={e => dragAgent(e, agent)} title="Drag into another terminal to reference this agent">
         <StatusDot status={agent.status} />
         <HarnessIcon id={agent.harness} size={14} />
-        <span className="pane-title">{agent.title || (agent.role === 'sub' ? agent.name : tildify(agent.cwd).split('/').pop() || '~')}</span>
-        {agent.title && agent.role !== 'sub' && <span className="pane-sub-meta">{tildify(agent.cwd).split('/').pop() || '~'}</span>}
+        <span className="pane-title" title={agent.title ?? undefined}>
+          {agent.title || (agent.role === 'sub' ? agent.name : folderName(agent.cwd))}
+        </span>
+        {agent.title && agent.role !== 'sub' && <span className="pane-sub-meta">{folderName(agent.cwd)}</span>}
         {agent.role === 'sub' ? (
           <span className="pane-sub-meta">
             ↳ {parent ? `from ${parent.name}` : 'sub-agent'}
@@ -188,23 +180,25 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
           </span>
         )}
         <div className="pane-actions">
-          <button className="icon-btn" title="More" onClick={() => setMenu(m => !m)}>
-            <Icon.More size={15} />
-          </button>
-          <button className="icon-btn" title="Hide pane (keeps running; bring it back from the sidebar)" onClick={() => setHidden(agent.id, true)}>
+          <span ref={more}>
+            <button className="icon-btn" title="More" onClick={() => setMenu(m => !m)}>
+              <Icon.More size={15} />
+            </button>
+            {menu && <Menu agent={agent} onClose={closeMenu} />}
+          </span>
+          <button className="icon-btn pane-extra" title="Hide pane (keeps running; bring it back from the sidebar)" onClick={() => setHidden(agent.id, true)}>
             <Icon.EyeOff size={14} />
           </button>
           <button className="icon-btn" title={maximized ? 'Restore' : 'Maximize'} onClick={() => setState({ maximizedId: maximized ? null : agent.id, focusedId: agent.id })}>
             {maximized ? <Icon.Collapse size={13} /> : <Icon.Expand size={13} />}
           </button>
-          <button className="icon-btn" title="New agent" onClick={onNew}>
+          <button className="icon-btn pane-extra" title="New agent" onClick={onNew}>
             <Icon.Plus size={15} />
           </button>
           <button className={`icon-btn ${confirmClose ? 'icon-btn-danger' : ''}`} title="Close (stops the agent)" onClick={close}>
             {confirmClose ? <span className="confirm-text">Close?</span> : <Icon.Close size={13} />}
           </button>
         </div>
-        {menu && <Menu agent={agent} onClose={() => setMenu(false)} />}
       </header>
       {agent.status === 'waiting' && agent.question && (
         <div className="pane-note pane-note-ask">

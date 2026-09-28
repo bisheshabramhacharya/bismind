@@ -18,7 +18,11 @@ process.removeAllListeners('warning');
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const cfg = await import(join(REPO, 'server', 'config.ts'));
 
-const [command = 'open', ...rest] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+// `bismind --dev` / `bismind --browser`: flags without a command mean "open".
+const HELP_FLAGS = ['--help', '-h'];
+const command = !argv[0] ? 'open' : argv[0].startsWith('-') && !HELP_FLAGS.includes(argv[0]) ? 'open' : argv[0];
+const rest = command === 'open' && argv[0] !== 'open' ? argv : argv.slice(1);
 const flags = {};
 const positionals = [];
 // Messages are free text: `bismind send w use --force` must send all of it.
@@ -27,8 +31,9 @@ if (TEXT_COMMANDS.includes(command)) positionals.push(...rest);
 else for (let i = 0; i < rest.length; i += 1) {
   const a = rest[i];
   if (a.startsWith('--')) {
-    const [k, v] = a.slice(2).split('=');
-    flags[k] = v ?? (rest[i + 1] && !rest[i + 1].startsWith('--') ? rest[++i] : true);
+    const eq = a.indexOf('=');
+    const k = eq < 0 ? a.slice(2) : a.slice(2, eq);
+    flags[k] = eq >= 0 ? a.slice(eq + 1) : rest[i + 1] && !rest[i + 1].startsWith('--') ? rest[++i] : true;
   } else positionals.push(a);
 }
 
@@ -209,18 +214,21 @@ function statusColor(s) {
   return c.dim(s);
 }
 
-function tmuxArgs() {
-  return ['-L', process.env.BISMIND_TMUX_SOCKET ?? 'bismind', '-f', cfg.TMUX_CONF];
+/** Attach this terminal to an agent's tmux session. */
+async function attachTmux(session) {
+  const { tmux } = await import(join(REPO, 'server', 'tmux.ts'));
+  const { file, args } = tmux.attachArgv(session);
+  spawnSync(file, args, { stdio: 'inherit' });
 }
 
-function tmuxBin() {
-  return ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux'].find(p => existsSync(p)) ?? 'tmux';
-}
-
-const ORCHESTRATION = ['spawn', 'wait', 'send', 'kill'];
+/**
+ * The shim is on every agent's PATH. Sub-agents may only report back and look around: no spawning
+ * (not even a new main agent), no messaging or killing agents, no changing settings or stopping the server.
+ */
+const SUB_COMMANDS = ['ask', 'done', 'hook', 'mcp', 'read', 'ls', 'list', 'models', 'doctor', 'help', '--help', '-h'];
 
 async function main() {
-  if (process.env.BISMIND_ROLE === 'sub' && ORCHESTRATION.includes(command)) {
+  if (process.env.BISMIND_ROLE === 'sub' && !SUB_COMMANDS.includes(command)) {
     return fail(`bismind ${command} isn't available to sub-agents. Do the work yourself, or say what's needed in your report.`);
   }
   switch (command) {
@@ -270,7 +278,7 @@ async function main() {
       } else {
         const m = await api('/api/mode');
         console.log(`sub-agent mode: ${c.bold(m.description)}  ${c.dim(`(autonomy: ${m.autonomy})`)}`);
-        console.log(c.dim('set with: bismind mode pi:commandcode/deepseek/deepseek-v4.1-flash | pi:openai-codex/gpt-5.5:high | codex:gpt-5.6-sol:high | claude:sonnet | devin:claude-sonnet-5-medium | native'));
+        console.log(c.dim('set with: bismind mode pi:commandcode/deepseek/deepseek-v4.1-flash | pi:openai-codex/gpt-5.5:high | codex:gpt-5.6-sol:high | claude:sonnet | devin:claude-sonnet-5-medium | droid | native'));
       }
       return;
     }
@@ -300,7 +308,7 @@ async function main() {
         body: { harness, cwd: resolve(flags.cwd ?? process.cwd()), model: flags.model ?? null, cols: process.stdout.columns, rows: process.stdout.rows },
       });
       console.log(`${c.bold(agent.name)} started (${agent.id}). ${c.dim('It shows up in the app too. Detach with ctrl-b d.')}`);
-      if (!flags.detached) spawnSync(tmuxBin(), [...tmuxArgs(), 'attach-session', '-t', agent.session], { stdio: 'inherit' });
+      if (!flags.detached) await attachTmux(agent.session);
       return;
     }
     case 'attach': {
@@ -310,7 +318,7 @@ async function main() {
       const a = await api(`/api/agents/${encodeURIComponent(target)}`);
       const { agents } = await api('/api/state');
       const full = agents.find(x => x.id === a.id);
-      spawnSync(tmuxBin(), [...tmuxArgs(), 'attach-session', '-t', full.session], { stdio: 'inherit' });
+      await attachTmux(full.session);
       return;
     }
     case 'ask': {
@@ -408,7 +416,8 @@ async function main() {
       const { health } = await client();
       const h = await health();
       console.log(`server   ${h ? c.green(`running (pid ${h.pid})`) : c.yellow('not running (starts on demand)')}`);
-      console.log(`tmux     ${existsSync(tmuxBin()) ? c.green(tmuxBin()) : c.red('missing — brew install tmux')}`);
+      const { tmux } = await import(join(REPO, 'server', 'tmux.ts'));
+      console.log(`tmux     ${tmux.bin ? c.green(tmux.bin) : c.red('missing — brew install tmux')}`);
       const { harnesses } = await import(join(REPO, 'server', 'harnesses.ts'));
       for (const x of harnesses(true)) console.log(`${x.id.padEnd(8)} ${x.bin ? c.green(x.bin) : c.dim('not installed')}`);
       console.log(`mode     ${cfg.describeMode(cfg.readSettings().mode)}`);
@@ -419,11 +428,11 @@ async function main() {
     case '-h':
       console.log(`${c.bold('bismind')} — talk to any harness; sub-agents on any harness
 
-  ${c.bold('bismind')}                       open the app window
-  ${c.bold('bismind new')} <harness>          start claude|codex|pi|devin|shell here, attached to this terminal
+  ${c.bold('bismind')} [--browser] [--dev]   open the app window (--dev: the Vite dev UI)
+  ${c.bold('bismind new')} <harness>          start claude|codex|pi|devin|droid|shell here, attached to this terminal
   ${c.bold('bismind ls')}                     agents and their sub-agents
   ${c.bold('bismind attach')} <name>          attach this terminal to any agent (detach: ctrl-b d)
-  ${c.bold('bismind mode')} [spec]            show/set sub-agent mode: pi:<provider/model>[:thinking] | codex:<model> | claude:<model> | devin:<model> | native
+  ${c.bold('bismind mode')} [spec]            show/set sub-agent mode: pi:<provider/model>[:thinking] | codex:<model> | claude:<model> | devin:<model> | droid | native
   ${c.bold('bismind models')} <harness>       list models you can use in a mode spec
 
   ${c.dim('orchestration from any shell (what the MCP tools do):')}

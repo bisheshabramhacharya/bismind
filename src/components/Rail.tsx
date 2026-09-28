@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { harnessLabel } from '../lib/agents';
+import { useDismiss } from '../lib/hooks';
 import { agentRef, api, dragAgent, patchSettings, patchUi, setHidden, setPinned, useStore } from '../lib/store';
+import { ACCENTS, THEMES, themeOf } from '../lib/themes';
 import type { Agent } from '../lib/types';
 import { showAgent, workspaceOf } from './Canvas';
 import { HarnessIcon, Icon } from './Icons';
+import { ResizeHandle } from './ResizeHandle';
 
 function AddWorkspace({ onDone }: { onDone: () => void }) {
   const [value, setValue] = useState('~/');
@@ -67,13 +71,14 @@ function AddWorkspace({ onDone }: { onDone: () => void }) {
   );
 }
 
-const LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', droid: 'Droid', shell: 'Terminal' };
+/** Untitled main agents are named after their harness ("codex-2"); show that as "Codex 2". */
 function labelFor(a: Agent): string {
   if (a.title) return a.title;
   if (a.role === 'sub') return a.name;
-  const m = a.name.match(/^(claude|codex|pi|devin|droid|terminal)(?:-(\d+))?$/);
-  if (!m) return a.name;
-  return `${LABELS[m[1] === 'terminal' ? 'shell' : m[1]]}${m[2] ? ` ${m[2]}` : ''}`;
+  const m = a.name.match(/^([a-z]+)(?:-(\d+))?$/);
+  const harness = m?.[1] === 'terminal' ? 'shell' : m?.[1];
+  if (!m || harness !== a.harness) return a.name;
+  return `${harnessLabel(harness)}${m[2] ? ` ${m[2]}` : ''}`;
 }
 
 /** Zeron's clockwise ring order for its 2×3 mini spinner, row by row. */
@@ -122,7 +127,8 @@ function ago(ms: number): string {
   return `${Math.floor(m / 1440)}d`;
 }
 
-type Menu = { agent: Agent; x: number; y: number; copy: boolean };
+/** `page`: the main list, or the Copy ▸ submenu. */
+type Menu = { agent: Agent; x: number; y: number; page: 'main' | 'copy' };
 
 function editAgent(id: string, patch: { title?: string; pinned?: boolean; archived?: boolean }) {
   return api(`/api/agents/${id}`, { method: 'PATCH', body: patch });
@@ -133,16 +139,7 @@ function RowMenu({ menu, setMenu, onRename }: { menu: Menu; setMenu: (m: Menu | 
   const box = useRef<HTMLDivElement>(null);
   const [confirm, setConfirm] = useState(false);
   const a = menu.agent;
-  useEffect(() => {
-    const off = (e: MouseEvent) => !box.current?.contains(e.target as Node) && setMenu(null);
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setMenu(null);
-    document.addEventListener('mousedown', off);
-    document.addEventListener('keydown', esc);
-    return () => {
-      document.removeEventListener('mousedown', off);
-      document.removeEventListener('keydown', esc);
-    };
-  }, [setMenu]);
+  useDismiss(box, useCallback(() => setMenu(null), [setMenu]));
   const run = (fn: () => unknown) => () => {
     void fn();
     setMenu(null);
@@ -151,9 +148,9 @@ function RowMenu({ menu, setMenu, onRename }: { menu: Menu; setMenu: (m: Menu | 
   const top = Math.min(menu.y, window.innerHeight - 200);
   return (
     <div className="row-menu" ref={box} style={{ left: menu.x, top }}>
-      {menu.copy ? (
+      {menu.page === 'copy' ? (
         <>
-          <button onClick={() => setMenu({ ...menu, copy: false })}>
+          <button onClick={() => setMenu({ ...menu, page: 'main' })}>
             <Icon.Chevron size={14} className="flip" /> Back
           </button>
           <button onClick={copy(labelFor(a))}>Title</button>
@@ -177,7 +174,7 @@ function RowMenu({ menu, setMenu, onRename }: { menu: Menu; setMenu: (m: Menu | 
           >
             <Icon.Archive size={14} /> {a.archived ? 'Unarchive' : 'Archive'}
           </button>
-          <button onClick={() => setMenu({ ...menu, copy: true })}>
+          <button onClick={() => setMenu({ ...menu, page: 'copy' })}>
             <Icon.Copy size={14} /> <span className="grow">Copy</span> <Icon.Chevron size={13} />
           </button>
           <div className="row-menu-sep" />
@@ -240,7 +237,7 @@ function AgentRow({ agent, depth, all, onMenu, renaming, doneRenaming }: { agent
         onDragStart={e => dragAgent(e, agent)}
         onContextMenu={e => {
           e.preventDefault();
-          onMenu({ agent, x: e.clientX, y: e.clientY, copy: false });
+          onMenu({ agent, x: e.clientX, y: e.clientY, page: 'main' });
         }}
       >
         <RowStatus status={agent.status} />
@@ -267,32 +264,37 @@ function AgentRow({ agent, depth, all, onMenu, renaming, doneRenaming }: { agent
   );
 }
 
-function Settings({ onClose }: { onClose: () => void }) {
+function Settings() {
   const settings = useStore(s => s.settings)!;
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const off = (e: MouseEvent) => !box.current?.parentElement?.contains(e.target as Node) && onClose();
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    document.addEventListener('mousedown', off);
-    document.addEventListener('keydown', esc);
-    return () => {
-      document.removeEventListener('mousedown', off);
-      document.removeEventListener('keydown', esc);
-    };
-  }, [onClose]);
   const ui = settings.ui;
+  const current = themeOf(ui.theme);
   return (
-    <div className="popover" ref={box}>
+    <div className="popover">
       <h4>Settings</h4>
       <div className="setting">
-        <span className="setting-label">Appearance</span>
-        <div className="seg">
-          <button className={ui.theme === 'dark' ? 'on' : ''} onClick={() => patchUi({ theme: 'dark' })}>
-            <Icon.Moon size={13} /> Dark
+        <span className="setting-label">Theme</span>
+        <div className="themes">
+          {THEMES.map(t => (
+            <button key={t.id} className={`theme ${current.id === t.id ? 'on' : ''}`} onClick={() => patchUi({ theme: t.id })}>
+              <span className="theme-art" style={{ background: t.term.background }}>
+                <i style={{ background: t.term.foreground, width: '70%' }} />
+                <i style={{ background: t.term.foreground, width: '45%' }} />
+                <i style={{ background: t.term.blue, width: '30%' }} />
+              </span>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="setting">
+        <span className="setting-label">Accent</span>
+        <div className="accents">
+          <button className={`accent accent-auto ${!ui.accent ? 'on' : ''}`} title="The theme's own" onClick={() => patchUi({ accent: null })}>
+            A
           </button>
-          <button className={ui.theme === 'light' ? 'on' : ''} onClick={() => patchUi({ theme: 'light' })}>
-            <Icon.Sun size={13} /> Light
-          </button>
+          {ACCENTS.map(a => (
+            <button key={a.id} className={`accent ${ui.accent === a.id ? 'on' : ''}`} title={a.label} style={{ background: a[current.scheme] }} onClick={() => patchUi({ accent: a.id })} />
+          ))}
         </div>
       </div>
       <div className="setting">
@@ -322,6 +324,7 @@ function Settings({ onClose }: { onClose: () => void }) {
         <span className="setting-help">
           <kbd>⌘K</kbd> new agent · <kbd>⌘J</kbd> sub-agent panes · <kbd>⌘B</kbd> workspaces · <kbd>⇧⌘B</kbd> dashboard
         </span>
+        <span className="setting-help">Drag a sidebar's inner edge to resize it; drag it past the edge to hide it.</span>
         <span className="setting-help">
           In any terminal: <code>bismind attach &lt;name&gt;</code>
         </span>
@@ -339,6 +342,9 @@ export function Rail({ onNew }: { onNew: () => void }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<Menu | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  // The footer, not just the popover: clicking the Settings button again toggles instead of reopening.
+  const foot = useRef<HTMLElement>(null);
+  useDismiss(foot, useCallback(() => setSettingsOpen(false), []), settingsOpen);
   if (!settings) return null;
   const rowProps = { onMenu: setMenu, renaming, doneRenaming: () => setRenaming(null) };
   const archived = agents.filter(a => a.archived);
@@ -348,7 +354,7 @@ export function Rail({ onNew }: { onNew: () => void }) {
     ...settings.workspaces.map(w => ({ id: w.id as string | null, name: w.name, path: w.path })),
     ...(agents.some(a => workspaceOf(a, settings.workspaces, agents) === null) || settings.workspaces.length === 0 ? [{ id: null, name: 'Home', path: '~' }] : []),
   ];
-  const dark = settings.ui.theme === 'dark';
+  const dark = themeOf(settings.ui.theme).scheme === 'dark';
 
   return (
     <aside className="rail surface">
@@ -366,7 +372,6 @@ export function Rail({ onNew }: { onNew: () => void }) {
           const roots = inWs.filter(a => !a.parentId || !inWs.some(p => p.id === a.parentId)).sort((x, y) => Number(!!y.pinned) - Number(!!x.pinned));
           const active = settings.activeWorkspace === g.id;
           const open = active ? collapsed[String(g.id)] !== true : collapsed[String(g.id)] === false;
-          const live = inWs.filter(a => !['exited', 'error'].includes(a.status)).length;
           return (
             <div key={String(g.id)}>
               <div className={`rail-ws ${active ? 'on' : ''}`} onClick={() => void patchSettings({ activeWorkspace: g.id })} title={g.path}>
@@ -417,7 +422,6 @@ export function Rail({ onNew }: { onNew: () => void }) {
                     <Icon.Chevron size={12} />
                   </button>
                 )}
-                {live > 0 && <span className="count">{live}</span>}
               </div>
               {open && roots.map(a => <AgentRow key={a.id} agent={a} depth={0} all={inWs} {...rowProps} />)}
             </div>
@@ -436,16 +440,17 @@ export function Rail({ onNew }: { onNew: () => void }) {
         )}
       </nav>
       {menu && <RowMenu menu={menu} setMenu={setMenu} onRename={setRenaming} />}
-      <footer className="rail-foot">
-        {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
+      <footer className="rail-foot" ref={foot}>
+        {settingsOpen && <Settings />}
         <button className={`account ${settingsOpen ? 'on' : ''}`} onClick={() => setSettingsOpen(o => !o)} title="Settings">
           <Icon.Gear size={15} />
           <span>Settings</span>
         </button>
-        <button className="icon-btn" title={dark ? 'Light mode' : 'Dark mode'} onClick={() => patchUi({ theme: dark ? 'light' : 'dark' })}>
+        <button className="icon-btn" title={dark ? 'Light theme' : 'Dark theme'} onClick={() => patchUi({ theme: dark ? 'light' : 'dark' })}>
           {dark ? <Icon.Moon size={15} /> : <Icon.Sun size={15} />}
         </button>
       </footer>
+      <ResizeHandle panel="rail" />
     </aside>
   );
 }

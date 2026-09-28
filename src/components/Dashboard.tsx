@@ -1,29 +1,49 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, elapsed, getState, patchSettings, patchUi, shortModel, tildify, useStore } from '../lib/store';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AGENT_HARNESSES, harnessLabel, isEnded, isRunning } from '../lib/agents';
+import { useConfirm, useDismiss, useTick } from '../lib/hooks';
+import { api, elapsed, folderName, getState, patchSettings, patchUi, shortModel, useStore } from '../lib/store';
 import type { Agent, ModelOption, ReviewAgent, SubagentMode } from '../lib/types';
 import { HarnessIcon, Icon } from './Icons';
 import { showAgent } from './Canvas';
-import { StatusDot, useTick } from './Pane';
+import { StatusDot } from './Pane';
+import { ResizeHandle } from './ResizeHandle';
 
-const HARNESSES: { id: SubagentMode['harness']; label: string }[] = [
-  { id: 'pi', label: 'Pi' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'claude', label: 'Claude' },
-  { id: 'devin', label: 'Devin' },
-  { id: 'droid', label: 'Droid' },
-  { id: 'native', label: 'Native' },
-];
-const REVIEW_HARNESSES: { id: ReviewAgent['harness']; label: string }[] = [
-  { id: 'mode', label: 'Same' },
-  { id: 'pi', label: 'Pi' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'claude', label: 'Claude' },
-  { id: 'devin', label: 'Devin' },
-  { id: 'droid', label: 'Droid' },
-];
+const MODE_HARNESSES: { id: SubagentMode['harness']; label: string }[] = [...AGENT_HARNESSES.map(h => ({ id: h.id, label: h.short })), { id: 'native', label: 'Native' }];
+const REVIEW_HARNESSES: { id: ReviewAgent['harness']; label: string }[] = [{ id: 'mode', label: 'Same' }, ...AGENT_HARNESSES.map(h => ({ id: h.id, label: h.short }))];
 const THINKING = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 const MAX_RUNNING = [1, 2, 3, 4, 6, 8, 12, 16, 24];
-const LABEL: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', droid: 'Droid', shell: 'Terminal' };
+
+/** The icon row that picks a harness, in the mode and review cards. */
+function HarnessRow<T extends string>({ options, value, onPick, titleFor }: { options: { id: T; label: string }[]; value: T; onPick: (id: T) => void; titleFor?: (id: T) => string }) {
+  return (
+    <div className="seg seg-icons">
+      {options.map(h => (
+        <button key={h.id} className={value === h.id ? 'on' : ''} onClick={() => onPick(h.id)} title={titleFor?.(h.id) ?? harnessLabel(h.id)}>
+          {h.id !== 'mode' && <HarnessIcon id={h.id} size={13} />}
+          {h.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ThinkingSelect({ value, onChange }: { value: string | null; onChange: (t: string | null) => void }) {
+  return (
+    <label className="setting">
+      <span className="setting-label">Thinking</span>
+      <select className="field" value={value ?? ''} onChange={e => onChange(e.target.value || null)}>
+        {THINKING.map(t => (
+          <option key={t} value={t}>
+            {t || 'default'}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** Interactive droid has no model or thinking flag; it runs the model set in Droid itself. */
+const DROID_NOTE = "Droid runs the model set in Droid's own settings.";
 
 function ModelPicker({ harness, value, onChange }: { harness: string; value: string | null; onChange: (m: string | null) => void }) {
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -44,12 +64,7 @@ function ModelPicker({ harness, value, onChange }: { harness: string; value: str
     };
   }, [harness]);
 
-  useEffect(() => {
-    if (!open) return;
-    const off = (e: MouseEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
-    document.addEventListener('mousedown', off);
-    return () => document.removeEventListener('mousedown', off);
-  }, [open]);
+  useDismiss(box, useCallback(() => setOpen(false), []), open);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
@@ -119,31 +134,20 @@ function ModeCard() {
           {more ? 'Less' : 'More'}
         </button>
       </div>
-      <div className="seg seg-icons">
-        {HARNESSES.map(h => (
-          <button key={h.id} className={mode.harness === h.id ? 'on' : ''} onClick={() => set({ harness: h.id, model: h.id === mode.harness ? mode.model : null })} title={h.label}>
-            <HarnessIcon id={h.id} size={13} />
-            {h.label}
-          </button>
-        ))}
-      </div>
+      <HarnessRow
+        options={MODE_HARNESSES}
+        value={mode.harness}
+        onPick={id => set({ harness: id, model: id === mode.harness ? mode.model : null })}
+        titleFor={id => (id === 'native' ? "Each harness's own built-in sub-agents" : harnessLabel(id))}
+      />
       {mode.harness === 'native' ? (
         <p className="mode-line">Each harness uses its own built-in sub-agents (no panes).</p>
       ) : (
         <>
-          <ModelPicker harness={mode.harness} value={mode.model} onChange={model => set({ model })} />
+          {mode.harness === 'droid' ? <p className="mode-line">{DROID_NOTE}</p> : <ModelPicker harness={mode.harness} value={mode.model} onChange={model => set({ model })} />}
           {more && (
             <div className="row2">
-              <label className="setting">
-                <span className="setting-label">Thinking</span>
-                <select className="field" value={mode.thinking ?? ''} onChange={e => set({ thinking: e.target.value || null })}>
-                  {THINKING.map(t => (
-                    <option key={t} value={t}>
-                      {t || 'default'}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {mode.harness !== 'droid' && <ThinkingSelect value={mode.thinking} onChange={thinking => set({ thinking })} />}
               <label className="setting">
                 <span className="setting-label">Run at once</span>
                 <select className="field" value={settings.maxRunning} onChange={e => void patchSettings({ maxRunning: Number(e.target.value) })}>
@@ -169,13 +173,13 @@ function ModeCard() {
           )}
           <p className="mode-line">
             When an agent here uses sub-agents, they run as <strong>{mode.harness}</strong>
-            {mode.model ? (
+            {mode.model && mode.harness !== 'droid' ? (
               <>
                 {' · '}
                 <strong>{shortModel(mode.model)}</strong>
               </>
             ) : null}
-            {mode.thinking ? ` · ${mode.thinking}` : ''}.
+            {mode.thinking && mode.harness !== 'droid' ? ` · ${mode.thinking}` : ''}.
           </p>
         </>
       )}
@@ -196,29 +200,36 @@ function Reply({ agent }: { agent: Agent }) {
     setTextState(t);
   };
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const send = async () => {
     if (!text.trim()) return;
     setBusy(true);
+    setError(null);
     try {
       await api(`/api/agents/${agent.id}/message`, { body: { text } });
       setText('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
   return (
-    <div className="reply">
-      <input
-        value={text}
-        onChange={e => setText(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && void send()}
-        placeholder={agent.status === 'waiting' ? `Answer ${agent.name}…` : `Message ${agent.name}…`}
-        disabled={busy}
-      />
-      <button className="icon-btn" onClick={() => void send()} disabled={busy || !text.trim()}>
-        <Icon.Send size={14} />
-      </button>
-    </div>
+    <>
+      <div className="reply">
+        <input
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && void send()}
+          placeholder={agent.status === 'waiting' ? `Answer ${agent.name}…` : `Message ${agent.name}…`}
+          disabled={busy}
+        />
+        <button className="icon-btn" onClick={() => void send()} disabled={busy || !text.trim()}>
+          <Icon.Send size={14} />
+        </button>
+      </div>
+      {error && <p className="note reply-error">Not sent: {error}</p>}
+    </>
   );
 }
 
@@ -252,21 +263,16 @@ function Row({ agent, parent }: { agent: Agent; parent: Agent | null }) {
       else expanded.delete(agent.id);
       return v;
     });
-  const [confirmClose, setConfirmClose] = useState(false);
-  useEffect(() => {
-    if (!confirmClose) return;
-    const t = setTimeout(() => setConfirmClose(false), 3000);
-    return () => clearTimeout(t);
-  }, [confirmClose]);
-  const running = !['exited', 'error'].includes(agent.status);
+  const [confirmClose, setConfirmClose] = useConfirm();
+  const running = !isEnded(agent);
   useEffect(() => {
     if (agent.status === 'waiting') setOpen(true);
   }, [agent.status]);
   const sub = agent.role === 'sub';
-  const title = sub ? (agent.task?.split('\n').find(l => l.trim())?.replace(/^#+\s*/, '') ?? agent.name) : LABEL[agent.harness];
+  const title = sub ? (agent.task?.split('\n').find(l => l.trim())?.replace(/^#+\s*/, '') ?? agent.name) : agent.title || harnessLabel(agent.harness);
   const subtitle = [
-    sub ? agent.name : tildify(agent.cwd).split('/').pop(),
-    `${LABEL[agent.harness]}${agent.model ? ` · ${shortModel(agent.model)}` : ''}`,
+    sub ? agent.name : folderName(agent.cwd),
+    `${harnessLabel(agent.harness)}${agent.model ? ` · ${shortModel(agent.model)}` : ''}`,
     parent ? `from ${parent.name}` : null,
   ]
     .filter(Boolean)
@@ -279,7 +285,7 @@ function Row({ agent, parent }: { agent: Agent; parent: Agent | null }) {
         </span>
         <span className="row-text">
           <span className="row-title">{title}</span>
-          <span className="row-sub">{agent.progress && ['working', 'starting'].includes(agent.status) ? agent.progress : subtitle}</span>
+          <span className="row-sub">{agent.progress && isRunning(agent) ? agent.progress : subtitle}</span>
         </span>
         <span className={`state state-${agent.status}`}>
           <StatusDot status={agent.status} />
@@ -301,13 +307,13 @@ function Row({ agent, parent }: { agent: Agent; parent: Agent | null }) {
               <pre>{agent.task}</pre>
             </details>
           )}
-          {agent.result ? <pre className="result">{agent.result}</pre> : sub && <p className="note">{['working', 'starting'].includes(agent.status) ? 'Working. The report shows up here when it finishes.' : 'No report.'}</p>}
+          {agent.result ? <pre className="result">{agent.result}</pre> : sub && <p className="note">{isRunning(agent) ? 'Working. The report shows up here when it finishes.' : 'No report.'}</p>}
           {agent.worktree && (
             <p className="note">
               <Icon.Branch size={12} /> {agent.worktree.branch}
             </p>
           )}
-          {!['exited', 'error'].includes(agent.status) && <Reply agent={agent} />}
+          {running && <Reply agent={agent} />}
           <div className="row-actions">
             <button onClick={() => showAgent(agent)}>Open pane</button>
             {running && <button onClick={() => void api(`/api/agents/${agent.id}/stop`, { body: {} })}>Stop</button>}
@@ -335,34 +341,16 @@ function ReviewCard() {
           {more ? 'Less' : 'More'}
         </button>
       </div>
-      <div className="seg seg-icons">
-        {REVIEW_HARNESSES.map(h => (
-          <button
-            key={h.id}
-            className={review.harness === h.id ? 'on' : ''}
-            onClick={() => set({ harness: h.id, model: h.id === review.harness ? review.model : null })}
-            title={h.id === 'mode' ? 'Same as the sub-agent mode' : h.label}
-          >
-            {h.id !== 'mode' && <HarnessIcon id={h.id} size={13} />}
-            {h.label}
-          </button>
-        ))}
-      </div>
-      {!same && <ModelPicker harness={review.harness} value={review.model} onChange={model => set({ model })} />}
+      <HarnessRow
+        options={REVIEW_HARNESSES}
+        value={review.harness}
+        onPick={id => set({ harness: id, model: id === review.harness ? review.model : null })}
+        titleFor={id => (id === 'mode' ? 'Same as the sub-agent mode' : harnessLabel(id))}
+      />
+      {!same && (review.harness === 'droid' ? <p className="mode-line">{DROID_NOTE}</p> : <ModelPicker harness={review.harness} value={review.model} onChange={model => set({ model })} />)}
       {more && (
         <>
-          {!same && (
-            <label className="setting">
-              <span className="setting-label">Thinking</span>
-              <select className="field" value={review.thinking ?? ''} onChange={e => set({ thinking: e.target.value || null })}>
-                {THINKING.map(t => (
-                  <option key={t} value={t}>
-                    {t || 'default'}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+          {!same && review.harness !== 'droid' && <ThinkingSelect value={review.thinking} onChange={thinking => set({ thinking })} />}
           <label className="setting">
             <span className="setting-label">Instructions for every review</span>
             <textarea
@@ -381,7 +369,7 @@ function ReviewCard() {
       )}
       <p className="mode-line">
         Reviews run as <strong>{same ? 'your sub-agent mode' : review.harness}</strong>
-        {!same && review.model ? (
+        {!same && review.model && review.harness !== 'droid' ? (
           <>
             {' · '}
             <strong>{shortModel(review.model)}</strong>
@@ -395,13 +383,19 @@ function ReviewCard() {
 
 export function Dashboard() {
   const agents = useStore(s => s.agents);
-  useTick(agents.some(a => ['working', 'starting', 'waiting'].includes(a.status)));
+  useTick(agents.some(isRunning));
+  // Forget drafts and open rows of agents that are gone.
+  useEffect(() => {
+    const ids = new Set(agents.map(a => a.id));
+    for (const id of drafts.keys()) if (!ids.has(id)) drafts.delete(id);
+    for (const id of expanded) if (!ids.has(id)) expanded.delete(id);
+  }, [agents]);
   const needs = agents.filter(a => a.status === 'waiting');
-  const working = agents.filter(a => ['working', 'starting'].includes(a.status));
+  const working = agents.filter(isRunning);
   const queued = agents.filter(a => a.status === 'queued');
   const done = agents.filter(a => a.role === 'sub' && a.status === 'done');
   const idle = agents.filter(a => a.role === 'main' && ['idle', 'done'].includes(a.status));
-  const ended = agents.filter(a => ['exited', 'error'].includes(a.status));
+  const ended = agents.filter(isEnded);
   const parentOf = (a: Agent) => (a.parentId ? (agents.find(p => p.id === a.parentId) ?? null) : null);
   const group = (title: string, list: Agent[]) =>
     list.length > 0 && (
@@ -425,6 +419,7 @@ export function Dashboard() {
           <Icon.Close size={13} />
         </button>
       </div>
+      <ResizeHandle panel="dash" />
       <div className="dash-scroll">
         <ModeCard />
         <ReviewCard />

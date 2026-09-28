@@ -21,9 +21,10 @@ pnpm install
 bismind            # starts the server if needed and opens the app window
 ```
 
-(`bismind` is `~/.local/bin/bismind` → `bin/bismind.mjs`.) The server serves the built UI on
-`http://127.0.0.1:4317`. For UI work, `pnpm dev` runs the server with `--watch` plus Vite on :5317
-(`bismind --dev` opens that).
+BisMind writes a `bismind` shim to `~/.bismind/bin` the first time it launches an agent; put it on
+your PATH once with `ln -s ~/.bismind/bin/bismind ~/.local/bin/bismind` (until then, run
+`node bin/bismind.mjs`). The server serves the built UI on `http://127.0.0.1:4317`. For UI work,
+`pnpm dev` runs the server with `--watch` plus Vite on :5317 (`bismind --dev` opens that).
 
 Requirements: Node 22.18+ (runs the TypeScript directly), tmux (`brew install tmux`), and whichever of
 `claude`, `codex`, `pi`, `devin` and `droid` you use.
@@ -44,9 +45,10 @@ Requirements: Node 22.18+ (runs the TypeScript directly), tmux (`brew install tm
   - pi: a pi extension (`pi-extension/bismind.ts`) that adds the tools. It also **pushes** each
     sub-agent's result back as a message, so pi never waits or polls.
 - **Sub-agents** get a brief telling them how to report. Each harness signals the end of a turn with its final message:
-  Claude Code → `Stop` hook · Codex → `notify` · pi → extension `agent_end` · Devin → `bismind done <<'EOF' …report… EOF`
-  (Devin has no turn hook; if it never calls `done`, 45s of silence ends its turn with its screen as the report).
-  A sub-agent that goes silent for 90s is marked stalled, and its screen is returned so the parent can decide what to do.
+  Claude Code → `Stop` hook · Codex → `notify` · pi → extension `agent_settled` · Devin and Droid → `bismind done <<'EOF' …report… EOF`
+  (they have no turn hook; if one never calls `done`, 45s of silence ends its turn with its screen as the report).
+  A sub-agent that goes silent for 90s (or never prints anything) is settled as done with a note that it
+  stalled, and its screen is returned so the parent can decide what to do.
 - **Questions (interactive sub-agents):** a sub-agent calls `ask_parent` (MCP or pi tool; Devin uses
   `bismind ask "…"`), then ends its turn. It shows under **Needs you** in the dashboard. The parent answers
   with `message_subagent`, or asks you first if the decision is yours. You can also answer straight from
@@ -70,13 +72,20 @@ Requirements: Node 22.18+ (runs the TypeScript directly), tmux (`brew install tm
 - **Agent references:** drag any agent (rail row, pane header, sub-agent chip) onto a terminal to paste
   `@bismind:<id> (name…; read it: bismind read <id>)`. It also drops as text into terminals outside the app.
   Any agent can follow it with `read_subagent` or `bismind read <id>` (task, status, last report, screen).
-- **Sub-agents can't fan out:** inside a sub-agent the MCP server exposes only `ask_parent` and `report_progress`.
+- **Sub-agents can't fan out:** inside a sub-agent the MCP server exposes only `ask_parent` and
+  `report_progress`, and the `bismind` CLI allows only `ask`, `done` and read-only commands (no `new`,
+  `spawn`, `send`, `kill`, `mode` or `stop`). This keeps well-behaved agents in their lane; it is not a
+  security boundary, since sub-agents run as you.
 - **"Spawn N sub-agents" always lands:** the orchestrator prompt says to use exactly N, and for Claude a
   `UserPromptSubmit` hook adds a reminder whenever your message mentions sub-agents.
 - **Parallel edits:** `isolate: true` gives a sub-agent its own git worktree and branch (`bismind/<name>-<id>`).
 
 Nothing is written to your global harness configs. Everything is passed per launch. Look at
-`~/.bismind/agents/<id>/launch.sh` to see exactly how an agent was started.
+`~/.bismind/agents/<id>/launch.sh` to see exactly how an agent was started. One exception: rail titles
+are written by `pi` using a `school` ChatGPT login (`~/.pi/agent/accounts/school.json`). BisMind keeps
+its own copy in `~/.bismind/pi-school` and writes rotated tokens back to that file so both stay valid.
+Without that file there are no generated titles (rename rows by hand). Titling sends the start of each
+chat (up to 6,000 characters) to that model.
 
 ## Sub-agent tools (MCP server `bismind`, and the same names in pi)
 
@@ -94,11 +103,11 @@ Optional per task: `harness`, `model`, `thinking`, `cwd`, `isolate`, `issue`, `n
 ## CLI
 
 ```
-bismind                         open the app window
-bismind new <harness>           start claude|codex|pi|devin|shell here, attached to this terminal
+bismind [--browser] [--dev]     open the app window (--browser: a browser tab; --dev: the Vite dev UI)
+bismind new <harness>           start claude|codex|pi|devin|droid|shell here, attached to this terminal
 bismind ls                      agents and their sub-agents
 bismind attach <name>           attach this terminal to any agent (detach: ctrl-b d)
-bismind mode [spec]             pi:<provider/model>[:thinking] | codex:<model> | claude:<model> | devin:<model> | native
+bismind mode [spec]             pi:<provider/model>[:thinking] | codex:<model> | claude:<model> | devin:<model> | droid | native
 bismind models <harness>        models you can use in a mode spec
 bismind spawn --task "…"  ·  wait  ·  send <name> "…"  ·  read <name>  ·  kill <name>
 bismind install claude|codex    register the MCP bridge globally (for sessions outside the app)
@@ -107,7 +116,8 @@ bismind up | stop | doctor
 
 ## Settings
 
-`~/.bismind/settings.json` holds the mode, autonomy, workspaces and UI layout. **Autonomy**
+`~/.bismind/settings.json` holds the mode, autonomy, workspaces and UI layout. Droid sub-agents
+use the model set in Droid itself (interactive `droid` has no model flag). **Autonomy**
 `full` (default) launches sub-agents without permission prompts (`--dangerously-skip-permissions`,
 `--dangerously-bypass-approvals-and-sandbox`, `--permission-mode dangerous`); `ask` keeps each
 harness's normal prompts, which you answer in the sub-agent's pane. Main agents always use their normal
@@ -121,12 +131,22 @@ server/harnesses.ts    how each harness is launched as a main agent or a sub-age
 server/prompts.ts      orchestrator + sub-agent guidance
 server/orchestrate.ts  sub-agent batches, mode resolution, summaries
 server/mcp.ts          stdio MCP bridge (answers the handshake instantly)
+server/client.ts       client for the CLI, MCP bridge and hooks; starts the server on demand
 server/index.ts        REST + WebSocket + static UI
+server/config.ts       paths, token, settings
+server/tmux.ts         the private tmux server every agent runs in
+server/models.ts       model lists for the pickers
+server/titles.ts       rail titles (see above)
 pi-extension/          pi integration
 bin/bismind.mjs        CLI and hook entry point
+mac/                   the native Mac window (built on first `bismind`)
+scripts/               install helpers
 src/                   the app (React + xterm.js): rail, canvas, panes, dashboard
+src/lib/themes.ts      themes, accents and terminal colors (UI tokens are in src/styles/app.css)
 ```
 
 The app is Code mode only: workspaces on the left, terminals in the middle, the Dashboard (sub-agent
-mode, needs-you / working / idle) on the right. Click your name for Settings; the sun/moon switches the
-light and dark themes.
+mode, needs-you / working / idle) on the right. **Settings** at the bottom of the left sidebar has six
+themes (Dark, Light, Midnight, Graphite, Nord, Paper), an accent color, the canvas layout and sub-agent
+permissions; the sun/moon next to it flips between light and dark. Drag either sidebar's inner edge to
+resize it (double-click resets it; dragging past the edge hides it, and ⌘B / ⇧⌘B bring it back).

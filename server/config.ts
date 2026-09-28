@@ -21,6 +21,7 @@ export const TMUX_CONF = join(DIR, 'tmux.conf');
 export const LOG_PATH = join(DIR, 'server.log');
 export const PORT = Number(process.env.BISMIND_PORT ?? 4317);
 export const BASE_URL = `http://127.0.0.1:${PORT}`;
+export const VERSION: string = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version;
 
 mkdirSync(AGENTS_DIR, { recursive: true });
 
@@ -46,6 +47,10 @@ export function writeJson(path: string, value: unknown) {
 }
 
 export type HarnessId = 'claude' | 'codex' | 'pi' | 'devin' | 'droid' | 'shell';
+/** Harnesses that can run sub-agents (everything but the plain shell). */
+export const AGENT_HARNESSES = ['claude', 'codex', 'pi', 'devin', 'droid'] as const;
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+export const MAX_RUNNING_LIMIT = 24;
 
 /** How sub-agents get made. `native` means "let the harness use its own sub-agents". */
 export interface SubagentMode {
@@ -79,11 +84,17 @@ export interface Settings {
   workspaces: Workspace[];
   activeWorkspace: string | null;
   ui: {
-    theme: 'dark' | 'light';
+    /** A theme id from src/lib/themes.ts (dark, light, midnight, …). */
+    theme: string;
+    /** An accent id from src/lib/themes.ts, or null for the theme's own. */
+    accent: string | null;
     layout: 'stack' | 'grid' | 'columns';
     showSubagents: boolean;
     rail: boolean;
     dashboard: boolean;
+    /** Widths in px of the side panels, set by dragging their edges. */
+    railWidth: number;
+    dashWidth: number;
   };
 }
 
@@ -94,8 +105,13 @@ const DEFAULT_SETTINGS: Settings = {
   maxRunning: 4,
   workspaces: [],
   activeWorkspace: null,
-  ui: { theme: 'dark', layout: 'stack', showSubagents: true, rail: true, dashboard: true },
+  ui: { theme: 'dark', accent: null, layout: 'stack', showSubagents: true, rail: true, dashboard: true, railWidth: 236, dashWidth: 320 },
 };
+
+/** A hand-edited 0, negative or non-number limit would queue every sub-agent forever or disable the limit. */
+function validMaxRunning(n: unknown): number {
+  return Number.isInteger(n) && (n as number) >= 1 && (n as number) <= MAX_RUNNING_LIMIT ? (n as number) : DEFAULT_SETTINGS.maxRunning;
+}
 
 export function readSettings(): Settings {
   const s = readJson<Partial<Settings>>(SETTINGS_PATH, {});
@@ -106,6 +122,7 @@ export function readSettings(): Settings {
     review: { ...DEFAULT_SETTINGS.review, ...(s.review ?? {}) },
     ui: { ...DEFAULT_SETTINGS.ui, ...(s.ui ?? {}) },
     workspaces: Array.isArray(s.workspaces) ? s.workspaces : [],
+    maxRunning: validMaxRunning(s.maxRunning),
   };
 }
 
@@ -124,6 +141,8 @@ export function patchSettings(patch: Partial<Settings>): Settings {
 
 export function describeMode(mode: SubagentMode): string {
   if (mode.harness === 'native') return 'native (the harness uses its own sub-agents)';
+  // Interactive droid has no model or thinking flag; it uses the model set in Droid itself.
+  if (mode.harness === 'droid') return "droid · the model set in Droid's own settings";
   return [mode.harness, mode.model ?? 'default model', mode.thinking ? `thinking ${mode.thinking}` : null].filter(Boolean).join(' · ');
 }
 
@@ -132,11 +151,9 @@ export function parseModeSpec(spec: string): SubagentMode {
   const trimmed = spec.trim();
   if (trimmed === 'native') return { harness: 'native', model: null, thinking: null };
   const [harness, ...rest] = trimmed.split(':');
-  const known = ['claude', 'codex', 'pi', 'devin', 'droid'];
-  if (!known.includes(harness)) throw new Error(`unknown harness "${harness}" (use ${known.join(', ')} or native)`);
-  const thinkingLevels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+  if (!(AGENT_HARNESSES as readonly string[]).includes(harness)) throw new Error(`unknown harness "${harness}" (use ${AGENT_HARNESSES.join(', ')} or native)`);
   let thinking: string | null = null;
-  if (rest.length > 1 && thinkingLevels.includes(rest[rest.length - 1])) thinking = rest.pop() ?? null;
+  if (rest.length > 1 && THINKING_LEVELS.includes(rest[rest.length - 1])) thinking = rest.pop() ?? null;
   const model = rest.join(':') || null;
   return { harness: harness as HarnessId, model, thinking };
 }

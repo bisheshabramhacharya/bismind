@@ -52,6 +52,8 @@ function run(args: string[], input?: string): Promise<string> {
       else resolve(stdout);
     });
     if (input !== undefined) {
+      // tmux may exit before reading stdin (dead socket); an unhandled EPIPE would crash the server.
+      child.stdin?.on('error', () => undefined);
       child.stdin?.end(input);
     }
   });
@@ -67,7 +69,11 @@ export const tmux = {
 
   async sessions(): Promise<Map<string, { dead: boolean; exitCode: number | null; pid: number }>> {
     // Not a tab: without a UTF-8 locale tmux prints tabs as "_", and every agent would look exited.
-    const out = await run(['list-panes', '-a', '-F', '#{session_name}|#{pane_dead}|#{pane_dead_status}|#{pane_pid}']).catch(() => '');
+    // No tmux server means no sessions; any other failure is thrown, so callers don't read it as "all gone".
+    const out = await run(['list-panes', '-a', '-F', '#{session_name}|#{pane_dead}|#{pane_dead_status}|#{pane_pid}']).catch(err => {
+      if (/no server running|error connecting|no such file/i.test(err.message)) return '';
+      throw err;
+    });
     const map = new Map<string, { dead: boolean; exitCode: number | null; pid: number }>();
     for (const line of out.split('\n')) {
       if (!line.trim()) continue;

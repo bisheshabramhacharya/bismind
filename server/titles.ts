@@ -45,10 +45,12 @@ function runTitle(prompt: string): Promise<string | null> {
   const args = ['-p', '--no-session', '-nt', '-ne', '-ns', '-nc', '-np', '--provider', 'openai-codex', '--model', 'gpt-5.6-luna', ask];
   return new Promise(resolve => {
     // pi waits for piped input while stdin is open.
-    execFile('pi', args, { env: { ...process.env, PI_CODING_AGENT_DIR: PI_DIR }, timeout: 60_000 }, (err, stdout) => {
+    const child = execFile('pi', args, { env: { ...process.env, PI_CODING_AGENT_DIR: PI_DIR }, timeout: 60_000 }, (err, stdout) => {
       syncCredentials();
       const title = stdout.trim().split('\n').pop()?.replace(/^["'“]|["'”.]$/g, '').trim();
       resolve(err || !title ? null : title.slice(0, 60));
-    }).stdin?.end();
+    });
+    child.stdin?.on('error', () => undefined);
+    child.stdin?.end();
   });
 }

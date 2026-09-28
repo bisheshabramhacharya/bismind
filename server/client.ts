@@ -47,12 +47,23 @@ export function ensureServer(): Promise<void> {
 
 export async function api<T = any>(path: string, init: { method?: string; body?: unknown; timeoutMs?: number } = {}): Promise<T> {
   await ensureServer();
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method: init.method ?? (init.body ? 'POST' : 'GET'),
-    headers: { 'content-type': 'application/json', 'x-bismind-token': TOKEN },
-    body: init.body ? JSON.stringify(init.body) : undefined,
-    signal: AbortSignal.timeout(init.timeoutMs ?? 30_000),
-  });
+  const request = () =>
+    fetch(`${BASE_URL}${path}`, {
+      method: init.method ?? (init.body ? 'POST' : 'GET'),
+      headers: { 'content-type': 'application/json', 'x-bismind-token': TOKEN },
+      body: init.body ? JSON.stringify(init.body) : undefined,
+      signal: AbortSignal.timeout(init.timeoutMs ?? 30_000),
+    });
+  let res: Response;
+  try {
+    res = await request();
+  } catch (err) {
+    // The MCP bridge outlives server restarts: when the server is gone, start it again and retry once.
+    if ((err as Error).name === 'TimeoutError' || (await health())) throw err;
+    ensured = null;
+    await ensureServer();
+    res = await request();
+  }
   const text = await res.text();
   let data: any = text;
   try {

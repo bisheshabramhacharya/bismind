@@ -4,61 +4,9 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal as XTerm } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { type DragEvent, memo, useEffect, useRef, useState } from 'react';
+import { appShortcut } from '../lib/shortcuts';
 import { AGENT_DRAG_TYPE, term, useStore } from '../lib/store';
-
-const DARK = {
-  background: '#141414',
-  foreground: '#e7e7e9',
-  cursor: '#e7e7e9',
-  cursorAccent: '#141414',
-  selectionBackground: '#3b5bdb66',
-  black: '#1c1c1e',
-  red: '#ff6b6b',
-  green: '#5fd38d',
-  yellow: '#f5c451',
-  blue: '#6ea8fe',
-  magenta: '#c79bff',
-  cyan: '#56d4dd',
-  white: '#d6d6d8',
-  brightBlack: '#6b6b70',
-  brightRed: '#ff8787',
-  brightGreen: '#7ee2a8',
-  brightYellow: '#ffd978',
-  brightBlue: '#8fbcff',
-  brightMagenta: '#d9b8ff',
-  brightCyan: '#7fe3ea',
-  brightWhite: '#ffffff',
-};
-
-const LIGHT = {
-  background: '#ffffff',
-  foreground: '#1f1f1f',
-  cursor: '#1f1f1f',
-  cursorAccent: '#ffffff',
-  selectionBackground: '#2f5fe833',
-  black: '#1f1f1f',
-  red: '#c42b1c',
-  green: '#16803c',
-  yellow: '#9a6700',
-  blue: '#1f5fd6',
-  magenta: '#8b3fd9',
-  cyan: '#0f7b8a',
-  white: '#6b6b6b',
-  brightBlack: '#8a8a8a',
-  brightRed: '#d73a2a',
-  brightGreen: '#1a9146',
-  brightYellow: '#b07800',
-  brightBlue: '#2f6fed',
-  brightMagenta: '#9a50e6',
-  brightCyan: '#138c9c',
-  brightWhite: '#2a2a2a',
-};
-
-/** App shortcuts that must reach the window even while a terminal has focus. */
-export function isAppShortcut(e: KeyboardEvent): boolean {
-  if (!e.metaKey) return false;
-  return ['b', 'j', 'k'].includes(e.key.toLowerCase());
-}
+import { terminalTheme } from '../lib/themes';
 
 /** Flush at once past this many queued chars, so a burst never becomes one huge, janky write. */
 const QUEUE_LIMIT = 256 * 1024;
@@ -89,7 +37,11 @@ function TerminalView({ agentId, focused, onFocus: onFocusProp }: { agentId: str
   const xtermRef = useRef<XTerm | null>(null);
   const focusedRef = useRef(focused);
   focusedRef.current = focused;
-  const theme = useStore(s => s.settings?.ui.theme ?? 'dark');
+  const themeId = useStore(s => s.settings?.ui.theme);
+  const accent = useStore(s => s.settings?.ui.accent);
+  const theme = terminalTheme({ theme: themeId, accent });
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const [dropping, setDropping] = useState(false);
 
   useEffect(() => {
@@ -99,7 +51,7 @@ function TerminalView({ agentId, focused, onFocus: onFocusProp }: { agentId: str
       fontSize: 12.5,
       lineHeight: 1.2,
       letterSpacing: 0,
-      theme: theme === 'light' ? LIGHT : DARK,
+      theme: themeRef.current,
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 0, // tmux owns scrollback (mouse wheel scrolls it)
@@ -126,7 +78,7 @@ function TerminalView({ agentId, focused, onFocus: onFocusProp }: { agentId: str
         webgl = null;
       }
     });
-    xterm.attachCustomKeyEventHandler(e => !isAppShortcut(e));
+    xterm.attachCustomKeyEventHandler(e => !appShortcut(e));
 
     const safeFit = () => {
       if (!el.offsetWidth || !el.offsetHeight) return;
@@ -235,8 +187,8 @@ function TerminalView({ agentId, focused, onFocus: onFocusProp }: { agentId: str
   }, [focused]);
 
   useEffect(() => {
-    if (xtermRef.current) xtermRef.current.options.theme = theme === 'light' ? LIGHT : DARK;
-  }, [theme]);
+    if (xtermRef.current) xtermRef.current.options.theme = theme;
+  }, [themeId, accent]);
 
   // Another agent dragged here: paste its reference (as a paste, so harness prompts don't treat "@" as a keystroke).
   const isAgentDrag = (e: DragEvent) => e.dataTransfer.types.includes(AGENT_DRAG_TYPE);

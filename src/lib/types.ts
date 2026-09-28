@@ -57,7 +57,18 @@ export interface Settings {
   maxRunning: number;
   workspaces: Workspace[];
   activeWorkspace: string | null;
-  ui: { theme: 'dark' | 'light'; layout: 'stack' | 'grid' | 'columns'; showSubagents: boolean; rail: boolean; dashboard: boolean };
+  ui: {
+    /** A theme id from themes.ts. */
+    theme: string;
+    /** An accent id from themes.ts, or null for the theme's own. */
+    accent: string | null;
+    layout: 'stack' | 'grid' | 'columns';
+    showSubagents: boolean;
+    rail: boolean;
+    dashboard: boolean;
+    railWidth: number;
+    dashWidth: number;
+  };
 }
 
 export interface HarnessInfo {

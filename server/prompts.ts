@@ -134,8 +134,9 @@ Verdict: APPROVE | CHANGES REQUESTED
 - Problems: "none", or one line each: [high|medium|low] file:line: problem → fix`;
 }
 
-export function subagentTaskMessage(task: string, systemPromptInjected: boolean, guidance: string): string {
-  return systemPromptInjected ? task : `${guidance}\n\n---\n\n# Your task\n\n${task}`;
+/** For harnesses without a system-prompt flag: the guidance travels at the top of the task. */
+export function subagentTaskMessage(task: string, guidance: string): string {
+  return `${guidance}\n\n---\n\n# Your task\n\n${task}`;
 }
 
 /** Added to a Claude Code prompt that mentions sub-agents, so the redirect is never missed. */

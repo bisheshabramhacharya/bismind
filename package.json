@@ -1,9 +1,12 @@
 {
   "name": "bismind",
   "private": true,
-  "version": "0.5.1",
+  "version": "0.6.0",
   "type": "module",
   "description": "Talk to any coding-agent harness; sub-agents on any harness, in visible terminals.",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "dev": "concurrently -k -n server,web -c magenta,blue \"node --watch --no-warnings server/index.ts\" \"vite\"",
     "dev:server": "node --watch --no-warnings server/index.ts",

@@ -4,6 +4,7 @@
  * tool call, so a slow or stopped server can never time out the client's startup.
  */
 import { api } from './client.ts';
+import { AGENT_HARNESSES, MAX_RUNNING_LIMIT, VERSION } from './config.ts';
 
 const PARENT = process.env.BISMIND_AGENT_ID ?? null;
 /** Sub-agents get ask_parent instead of the orchestration tools, so they can't fan out recursively. */
@@ -16,7 +17,7 @@ const TASK_SCHEMA = {
   properties: {
     task: { type: 'string', description: 'Complete, self-contained brief: goal, relevant files, constraints, how to verify, what to report. The sub-agent starts with zero context.' },
     name: { type: 'string', description: 'Short name for the pane, e.g. "auth-api". Defaults to one derived from the task.' },
-    harness: { type: 'string', enum: ['claude', 'codex', 'pi', 'devin', 'droid'], description: "Only if the user asked for a specific harness. Defaults to the user's sub-agent mode." },
+    harness: { type: 'string', enum: [...AGENT_HARNESSES], description: "Only if the user asked for a specific harness. Defaults to the user's sub-agent mode." },
     model: { type: 'string', description: 'Only if the user asked for a specific model (pi uses "provider/model").' },
     thinking: { type: 'string', description: 'Reasoning effort: low, medium, high, xhigh, max.' },
     cwd: { type: 'string', description: "Working directory. Defaults to yours." },
@@ -35,7 +36,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tasks: { type: 'array', items: TASK_SCHEMA, minItems: 1, maxItems: 24 },
+        tasks: { type: 'array', items: TASK_SCHEMA, minItems: 1, maxItems: MAX_RUNNING_LIMIT },
         cwd: { type: 'string', description: 'Default working directory for every task.' },
       },
       required: ['tasks'],
@@ -188,7 +189,7 @@ async function handle(msg: { id?: number | string | null; method: string; params
           result: {
             protocolVersion: params?.protocolVersion ?? '2025-06-18',
             capabilities: { tools: {} },
-            serverInfo: { name: 'bismind', version: '0.5.1' },
+            serverInfo: { name: 'bismind', version: VERSION },
             instructions: IS_SUB
               ? 'You are a BisMind sub-agent. Use ask_parent when blocked on a decision only your parent can make; your final message is your report.'
               : "BisMind runs sub-agents on any harness (pi, Codex, Claude Code, Devin, Droid) in visible terminal panes, using the user's chosen sub-agent mode. Spawn independent tasks together with spawn_subagents, then wait_subagents.",

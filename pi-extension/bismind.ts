@@ -93,18 +93,21 @@ export default function bismind(pi: ExtensionAPI) {
   // ── Push results back: long-poll BisMind for notices about this agent's children ──
   let running = false;
   let seq = 0;
-  // Notices from before this process started were handled by an earlier load (or are stale).
+  // Notices from before this process started were handled by an earlier load (or are stale), except
+  // a question that is still unanswered: one asked while pi was reloading must not be lost.
   const loadedAt = Date.now();
   const loop = async () => {
     while (running) {
       try {
         const out = await api(`/api/notices?parent=${AGENT_ID}&after=${seq}&timeout=25000`, undefined, 35_000);
         seq = out.seq ?? seq;
-        const notices: { agentId: string; kind: string; at: number }[] = (out.notices ?? []).filter((n: { at: number }) => n.at >= loadedAt);
+        const notices: { agentId: string; kind: string; at: number }[] = (out.notices ?? []).filter((n: { at: number; kind: string }) => n.at >= loadedAt || n.kind === 'question');
         if (!notices.length) continue;
         const ids = [...new Set(notices.map(n => n.agentId))];
-        const subs = await Promise.all(ids.map(id => api(`/api/agents/${id}`).catch(() => null)));
-        const parts = subs.filter(Boolean).map((s: any) => {
+        const fresh = new Set(notices.filter(n => n.at >= loadedAt).map(n => n.agentId));
+        const subs = (await Promise.all(ids.map(id => api(`/api/agents/${id}`).catch(() => null)))).filter((s: any) => s && (fresh.has(s.id) || s.status === 'waiting'));
+        if (!subs.length) continue;
+        const parts = subs.map((s: any) => {
           if (s.status === 'waiting') return `### ${s.name} asks\n${s.question}\n\n(answer with message_subagent id="${s.name}"; if it needs the user's decision, ask the user first)`;
           if (s.status === 'done') return `### ${s.name} finished (${s.harness}${s.model ? ` · ${s.model}` : ''}, ${s.elapsed})\n${s.result ?? '(no final message)'}`;
           return `### ${s.name} ${s.status}${s.result ? `\n${s.result}` : ''}`;

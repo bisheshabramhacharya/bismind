@@ -4,7 +4,7 @@
  */
 import { homedir } from 'node:os';
 import { type Agent, agents } from './agents.ts';
-import { type HarnessId, describeMode, readSettings } from './config.ts';
+import { type HarnessId, MAX_RUNNING_LIMIT, describeMode, readSettings } from './config.ts';
 import { harnessLabel, harnesses } from './harnesses.ts';
 import { reviewBrief } from './prompts.ts';
 
@@ -21,7 +21,7 @@ export interface TaskSpec {
 
 export async function spawnSubagents(parentId: string | null, tasks: TaskSpec[], cwd?: string) {
   if (!Array.isArray(tasks) || tasks.length === 0) throw new Error('tasks must be a non-empty array');
-  if (tasks.length > 24) throw new Error('at most 24 sub-agents per call');
+  if (tasks.length > MAX_RUNNING_LIMIT) throw new Error(`at most ${MAX_RUNNING_LIMIT} sub-agents per call`);
   const parent = parentId ? agents.get(parentId) : null;
   if (parent?.role === 'sub') throw new Error("sub-agents can't spawn sub-agents; do the work yourself or say what's needed in your report");
   const mode = readSettings().mode;
@@ -69,7 +69,8 @@ const reviewing = new Set<string>();
 export async function reviewSubagents(parentId: string, ids?: string[]) {
   const parent = agents.must(parentId);
   if (parent.role === 'sub') throw new Error("sub-agents can't start reviews");
-  const targets = (ids?.length ? ids.map(id => agents.must(id)) : reviewable(parent.id)).filter(t => t.parentId === parent.id && !t.reviewOf && !reviewing.has(t.id));
+  // Explicit ids get the same rule as the default: only finished work is reviewed, never a half-done tree.
+  const targets = (ids?.length ? ids.map(id => agents.must(id)) : reviewable(parent.id)).filter(t => t.parentId === parent.id && t.status === 'done' && !t.reviewOf && !reviewing.has(t.id));
   if (!targets.length) return { spawned: [], note: 'Nothing to review: no finished sub-agents of yours with a branch that are not reviewed yet.' };
   for (const t of targets) reviewing.add(t.id);
   const { mode, review } = readSettings();

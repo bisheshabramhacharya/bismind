@@ -7,10 +7,10 @@ import { randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
-import { extname, join, normalize, resolve } from 'node:path';
+import { extname, join, normalize, resolve, sep } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { agents } from './agents.ts';
-import { PORT, REPO, parseModeSpec, patchSettings, readSettings, readToken, type Settings } from './config.ts';
+import { AGENT_HARNESSES, MAX_RUNNING_LIMIT, PORT, REPO, parseModeSpec, patchSettings, readSettings, readToken, type Settings } from './config.ts';
 import { harnesses } from './harnesses.ts';
 import { modelsFor } from './models.ts';
 import { modeInfo, reviewSubagents, spawnSubagents, summarize, waitFor } from './orchestrate.ts';
@@ -76,7 +76,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     const patch: Partial<Settings> = {};
     if (typeof b.modeSpec === 'string') patch.mode = parseModeSpec(b.modeSpec);
     if (b.mode && typeof b.mode === 'object') {
-      if (!['native', 'claude', 'codex', 'pi', 'devin', 'droid'].includes(b.mode.harness)) throw new HttpError(400, 'mode.harness must be native, claude, codex, pi, devin or droid');
+      if (b.mode.harness !== 'native' && !(AGENT_HARNESSES as readonly string[]).includes(b.mode.harness)) throw new HttpError(400, `mode.harness must be native or one of ${AGENT_HARNESSES.join(', ')}`);
       patch.mode = {
         harness: b.mode.harness,
         model: typeof b.mode.model === 'string' && b.mode.model ? b.mode.model : null,
@@ -86,14 +86,14 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     if (b.autonomy === 'full' || b.autonomy === 'ask') patch.autonomy = b.autonomy;
     if ('maxRunning' in b) {
       const n = Number(b.maxRunning);
-      if (!Number.isInteger(n) || n < 1 || n > 24) throw new HttpError(400, 'maxRunning must be a whole number from 1 to 24');
+      if (!Number.isInteger(n) || n < 1 || n > MAX_RUNNING_LIMIT) throw new HttpError(400, `maxRunning must be a whole number from 1 to ${MAX_RUNNING_LIMIT}`);
       patch.maxRunning = n;
     }
     if (b.ui) patch.ui = b.ui;
     if ('activeWorkspace' in b) patch.activeWorkspace = b.activeWorkspace;
     if (b.review && typeof b.review === 'object') {
       const r = b.review;
-      if (!['mode', 'claude', 'codex', 'pi', 'devin', 'droid'].includes(r.harness)) throw new HttpError(400, 'review.harness must be mode, claude, codex, pi, devin or droid');
+      if (r.harness !== 'mode' && !(AGENT_HARNESSES as readonly string[]).includes(r.harness)) throw new HttpError(400, `review.harness must be mode or one of ${AGENT_HARNESSES.join(', ')}`);
       patch.review = {
         harness: r.harness,
         model: typeof r.model === 'string' && r.model ? r.model : null,
@@ -278,7 +278,8 @@ function serveStatic(res: ServerResponse, pathname: string) {
     return;
   }
   let file = normalize(join(DIST, pathname));
-  if (!file.startsWith(DIST) || !existsSync(file) || statSync(file).isDirectory()) file = join(DIST, 'index.html');
+  // With the separator, a sibling folder like dist-old can't pass the check.
+  if (!file.startsWith(DIST + sep) || !existsSync(file) || statSync(file).isDirectory()) file = join(DIST, 'index.html');
   res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', 'cache-control': file.endsWith('index.html') ? 'no-cache' : 'max-age=31536000' });
   createReadStream(file)
     .on('error', () => res.end())

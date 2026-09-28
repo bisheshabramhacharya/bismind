@@ -37,9 +37,13 @@ function which(bin: string): string | null {
 }
 
 let cache: HarnessInfo[] | null = null;
+let cachedAt = 0;
+/** Re-probed now and then, so a harness installed while the server runs shows up without a restart. */
+const CACHE_MS = 15_000;
 export function harnesses(refresh = false): HarnessInfo[] {
-  if (cache && !refresh) return cache;
-  const shellBin = process.env.SHELL && existsSync(process.env.SHELL) ? process.env.SHELL : '/bin/zsh';
+  if (cache && !refresh && Date.now() - cachedAt < CACHE_MS) return cache;
+  const shellBin = [process.env.SHELL, '/bin/zsh', '/bin/bash', '/bin/sh'].find(p => p && existsSync(p)) ?? '/bin/sh';
+  cachedAt = Date.now();
   cache = [
     { id: 'claude', label: LABELS.claude, bin: which('claude'), reportsTurns: true, canOrchestrate: true },
     { id: 'codex', label: LABELS.codex, bin: which('codex'), reportsTurns: true, canOrchestrate: true },
@@ -52,8 +56,9 @@ export function harnesses(refresh = false): HarnessInfo[] {
 }
 
 export function harness(id: string): HarnessInfo {
-  const h = harnesses().find(x => x.id === id);
+  let h = harnesses().find(x => x.id === id);
   if (!h) throw new Error(`unknown harness "${id}" — use claude, codex, pi, devin, droid or shell`);
+  if (!h.bin) h = harnesses(true).find(x => x.id === id)!;
   if (!h.bin) throw new Error(`${h.label} is not installed on this machine`);
   return h;
 }
@@ -110,6 +115,9 @@ export function writeLaunch(input: LaunchInput): string {
   const h = harness(input.harness);
   const settings = readSettings();
   const full = input.role === 'sub' && settings.autonomy === 'full';
+  // Only harnesses that get BisMind's tools (MCP or the pi extension) are told to orchestrate with them.
+  const orchestrate = input.orchestrate && h.canOrchestrate;
+  const reportsViaShell = !h.reportsTurns;
   const guidance =
     input.role === 'sub'
       ? subagentPrompt({
@@ -117,17 +125,17 @@ export function writeLaunch(input: LaunchInput): string {
           parentLabel: input.parentLabel ?? 'the orchestrator',
           cwd: input.cwd,
           worktree: input.worktree,
-          askHow: input.harness === 'devin' || input.harness === 'droid' ? 'run `bismind ask "<one self-contained question>"` in the shell' : 'call the `ask_parent` tool with one self-contained question',
+          askHow: reportsViaShell ? 'run `bismind ask "<one self-contained question>"` in the shell' : 'call the `ask_parent` tool with one self-contained question',
           // Devin and Droid have no turn hook, so they hand their report over explicitly.
-          reportVia: input.harness === 'devin' || input.harness === 'droid' ? 'shell' : 'final-message',
+          reportVia: reportsViaShell ? 'shell' : 'final-message',
           issue: input.issue,
         })
-      : input.orchestrate
+      : orchestrate
         ? orchestratorPrompt({ toolStyle: input.harness === 'pi' ? 'pi' : 'mcp' })
         : null;
   // Built-in sub-agents are removed at launch (sub-agents never fan out; main agents use the mode),
   // so the harness goes straight to BisMind's tools instead of trying its own first.
-  const noNative = input.role === 'sub' || input.orchestrate;
+  const noNative = input.role === 'sub' || orchestrate;
   const promptFile = join(input.agentDir, 'prompt.md');
   const argv: string[] = [h.bin!];
   let prompt: string | null = input.task;
@@ -188,7 +196,7 @@ export function writeLaunch(input: LaunchInput): string {
     }
     case 'devin': {
       // Devin has no system-prompt flag, so a sub-agent's guidance travels with its task.
-      if (input.role === 'sub' && prompt) prompt = subagentTaskMessage(prompt, false, guidance ?? '');
+      if (input.role === 'sub' && prompt) prompt = subagentTaskMessage(prompt, guidance ?? '');
       // The user picked this folder (a workspace or a parent's cwd); don't stop on Devin's trust prompt.
       argv.push('--respect-workspace-trust', 'false');
       if (input.model) argv.push('--model', input.model);

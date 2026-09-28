@@ -23,6 +23,11 @@
   --red: #f87171;
   --shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
   --radius: 14px;
+  /* Sidebar rows, derived from the text color so every theme gets them for free. */
+  --row-hover: color-mix(in srgb, var(--text) 10%, transparent);
+  --row-on: color-mix(in srgb, var(--text) 11%, transparent);
+  --dot: color-mix(in srgb, var(--text) 16%, transparent);
+  --scrim: rgba(0, 0, 0, 0.45);
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
   --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter, system-ui, sans-serif;
 }
@@ -47,6 +52,90 @@
   --amber: #d97706;
   --red: #dc2626;
   --shadow: 0 16px 48px rgba(0, 0, 0, 0.14);
+}
+/* Light-scheme themes share these. */
+:root[data-scheme='light'] {
+  color-scheme: light;
+  --row-hover: color-mix(in srgb, var(--text) 6%, transparent);
+  --row-on: color-mix(in srgb, var(--text) 7%, transparent);
+  --dot: color-mix(in srgb, var(--text) 16%, transparent);
+  --scrim: rgba(0, 0, 0, 0.25);
+}
+/* Terminal colors for each theme live in src/lib/themes.ts; --cell must match its background. */
+:root[data-theme='midnight'] {
+  --stage: #070b14;
+  --panel: rgba(150, 175, 255, 0.04);
+  --ring: rgba(150, 175, 255, 0.12);
+  --ring-soft: rgba(150, 175, 255, 0.07);
+  --cell: #0d1322;
+  --hover: rgba(150, 175, 255, 0.07);
+  --active: rgba(150, 175, 255, 0.13);
+  --field: rgba(150, 175, 255, 0.05);
+  --pop: #141b2d;
+  --text: #e6ebf5;
+  --text-2: #9aa6bf;
+  --text-3: #7a86a0;
+  --text-4: #505b73;
+  --blue: #6b8cff;
+  --focus: #5b7cfa;
+}
+:root[data-theme='graphite'] {
+  --stage: #1b1b1d;
+  --panel: rgba(255, 255, 255, 0.04);
+  --ring: rgba(255, 255, 255, 0.09);
+  --ring-soft: rgba(255, 255, 255, 0.055);
+  --cell: #232326;
+  --hover: rgba(255, 255, 255, 0.055);
+  --active: rgba(255, 255, 255, 0.1);
+  --field: rgba(255, 255, 255, 0.045);
+  --pop: #2a2a2e;
+  --text: #ececee;
+  --text-2: #a8a8ae;
+  --text-3: #8a8a90;
+  --text-4: #636368;
+  --blue: #7c9cff;
+  --focus: #6d8dff;
+}
+:root[data-theme='nord'] {
+  --stage: #242933;
+  --panel: rgba(216, 222, 233, 0.04);
+  --ring: rgba(216, 222, 233, 0.1);
+  --ring-soft: rgba(216, 222, 233, 0.06);
+  --cell: #2e3440;
+  --hover: rgba(216, 222, 233, 0.06);
+  --active: rgba(216, 222, 233, 0.11);
+  --field: rgba(216, 222, 233, 0.05);
+  --pop: #3b4252;
+  --text: #eceff4;
+  --text-2: #c0c8d6;
+  --text-3: #9aa3b5;
+  --text-4: #6b7385;
+  --blue: #88c0d0;
+  --focus: #81a1c1;
+  --green: #a3be8c;
+  --amber: #ebcb8b;
+  --red: #d57780;
+}
+:root[data-theme='paper'] {
+  --stage: #f3eee4;
+  --panel: rgba(90, 60, 20, 0.03);
+  --ring: rgba(90, 60, 20, 0.12);
+  --ring-soft: rgba(90, 60, 20, 0.07);
+  --cell: #fbf8f1;
+  --hover: rgba(90, 60, 20, 0.05);
+  --active: rgba(90, 60, 20, 0.09);
+  --field: rgba(90, 60, 20, 0.04);
+  --pop: #fffdf8;
+  --text: #2b2620;
+  --text-2: #5c5346;
+  --text-3: #7d7263;
+  --text-4: #a89c8a;
+  --blue: #c26a2e;
+  --focus: #c26a2e;
+  --green: #3f8f4f;
+  --amber: #b7791f;
+  --red: #c0392b;
+  --shadow: 0 16px 48px rgba(60, 40, 10, 0.14);
 }
 
 * {
@@ -163,15 +252,53 @@ kbd {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 236px minmax(0, 1fr) 320px;
+  grid-template-columns: var(--rail-w, 236px) minmax(0, 1fr) var(--dash-w, 320px);
   gap: 10px;
   padding: 0 12px 12px;
 }
 .main.no-rail {
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) var(--dash-w, 320px);
 }
 .main.no-dash {
-  grid-template-columns: 236px minmax(0, 1fr);
+  grid-template-columns: var(--rail-w, 236px) minmax(0, 1fr);
+}
+/* Drag handle on a side panel's inner edge; sits in the gap between panels. */
+.resize {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  width: 10px;
+  z-index: 5;
+  cursor: col-resize;
+}
+.resize-right {
+  right: -10px;
+}
+.resize-left {
+  left: -10px;
+}
+.resize::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--focus);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.resize:hover::after,
+.resize.active::after {
+  opacity: 0.6;
+}
+.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.resizing .pane {
+  pointer-events: none;
 }
 .main.no-rail.no-dash {
   grid-template-columns: minmax(0, 1fr);
@@ -199,9 +326,11 @@ kbd {
 
 /* ─── Rail ──────────────────────────────────────────────────────────────── */
 .rail {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 .section-head {
   display: flex;
@@ -213,33 +342,34 @@ kbd {
   font-weight: 600;
   letter-spacing: 0.02em;
 }
+/* Rail rows after Zeron (crates/ui/src/shell.rs, motion.rs, loaders.rs). */
 .rail-list {
   flex: 1;
   overflow-y: auto;
-  padding: 0 7px;
+  padding: 4px 6px 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 .rail-ws {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 7px;
+  gap: 4px;
+  height: 28px;
+  margin-top: 12px;
+  padding: 0 8px;
   border-radius: 7px;
-  color: var(--text-2);
+  color: var(--text-4);
   font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
 }
-.rail-ws:hover {
-  background: var(--hover);
-  color: var(--text);
+.rail-list > div:first-child > .rail-ws {
+  margin-top: 0;
 }
+.rail-ws:hover,
 .rail-ws.on {
-  background: var(--active);
-  color: var(--text);
-  font-weight: 600;
+  color: var(--text-3);
 }
 .rail-ws-name {
   flex: 1;
@@ -249,10 +379,11 @@ kbd {
   white-space: nowrap;
 }
 .rail-caret {
-  color: var(--text-3);
+  order: 99;
+  color: var(--text-4);
   display: grid;
   place-items: center;
-  transition: transform 0.15s;
+  transition: transform 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 .rail-caret.open {
   transform: rotate(90deg);
@@ -296,26 +427,26 @@ kbd {
 .rail-agent {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   width: 100%;
-  height: 28px;
-  border-radius: 7px;
-  color: var(--text-2);
-  font-size: 12.5px;
-  font-weight: 500;
+  height: 29px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: color-mix(in srgb, var(--text) 80%, transparent);
+  font-size: 13px;
+  line-height: 17px;
   text-align: left;
-  padding-right: 8px;
+  cursor: pointer;
+  transition: background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1), color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: rail-in 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .rail-agent:hover {
-  background: var(--hover);
+  background: var(--row-hover);
   color: var(--text);
 }
 .rail-agent.on {
-  background: var(--active);
+  background: var(--row-on);
   color: var(--text);
-}
-.rail-agent {
-  cursor: pointer;
 }
 .rail-agent-hidden {
   opacity: 0.5;
@@ -338,13 +469,6 @@ kbd {
 .rail-eye:hover {
   background: var(--active);
   color: var(--text);
-}
-.rail-agent-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .rail-branch {
   color: var(--text-4);
@@ -432,7 +556,7 @@ kbd {
   position: absolute;
   bottom: calc(100% + 6px);
   left: 0;
-  right: 0;
+  width: max(100%, 264px);
   z-index: 40;
   background: var(--pop);
   box-shadow: inset 0 0 0 1px var(--ring), var(--shadow);
@@ -461,6 +585,64 @@ kbd {
   font-size: 11px;
   color: var(--text-3);
   line-height: 1.4;
+}
+/* Theme swatches: a mini stage with a terminal cell and an accent stripe. */
+.themes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.theme {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--text-3);
+  box-shadow: inset 0 0 0 1px var(--ring-soft);
+}
+.theme:hover {
+  color: var(--text);
+}
+.theme.on {
+  color: var(--text);
+  box-shadow: inset 0 0 0 1.5px var(--focus);
+}
+.theme-art {
+  height: 30px;
+  border-radius: 5px;
+  padding: 6px 7px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.25);
+}
+.theme-art i {
+  height: 3px;
+  border-radius: 2px;
+  opacity: 0.8;
+}
+.accents {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.accent {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+.accent.on {
+  box-shadow: 0 0 0 2px var(--pop), 0 0 0 3.5px var(--text-2);
+}
+.accent-auto {
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 600;
 }
 
 /* ─── Status dots / text ────────────────────────────────────────────────── */
@@ -619,7 +801,7 @@ kbd {
 }
 .seg-icons {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .seg-icons button {
   flex-direction: column;
@@ -775,6 +957,7 @@ kbd {
 
 /* ─── Pane ──────────────────────────────────────────────────────────────── */
 .pane {
+  container-type: inline-size;
   flex: 1;
   min-width: 0;
   min-height: 120px;
@@ -800,16 +983,28 @@ kbd {
   color: var(--text-3);
 }
 .pane-title {
+  flex: 0 1 auto;
+  min-width: 24px;
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--text-3);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pane-head > .px,
+.pane-head > svg {
+  flex: none;
+}
+.pane-head > .state {
+  flex: none;
 }
 .pane-sub .pane-title {
   color: var(--text);
   font-weight: 600;
 }
 .pane-sub-meta {
+  flex: 0 1000 auto;
   font-size: 11px;
   color: var(--text-4);
   overflow: hidden;
@@ -824,9 +1019,24 @@ kbd {
   flex: none;
   opacity: 0.75;
 }
+.pane-actions > span {
+  display: flex;
+}
 .pane:hover .pane-actions,
 .pane-focused .pane-actions {
   opacity: 1;
+}
+/* Narrow panes drop the extras first (hide, new agent); more, maximize and close always stay. */
+@container (max-width: 340px) {
+  .pane-head .pane-sub-meta,
+  .pane-actions .pane-extra {
+    display: none;
+  }
+}
+@container (max-width: 250px) {
+  .pane-head > .state {
+    display: none;
+  }
 }
 .pane-body {
   flex: 1;
@@ -891,6 +1101,7 @@ kbd {
   color: var(--text);
 }
 .subtray-chips {
+  min-width: 0;
   display: flex;
   gap: 5px;
   overflow-x: auto;
@@ -964,7 +1175,7 @@ kbd {
 .modal-scrim {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrim);
   display: grid;
   place-items: center;
   z-index: 50;
@@ -983,9 +1194,11 @@ kbd {
 
 /* ─── Dashboard ─────────────────────────────────────────────────────────── */
 .dash {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 .dash-strip {
   display: flex;
@@ -1144,6 +1357,9 @@ kbd {
   align-items: center;
   gap: 6px;
   margin: 4px 0;
+}
+.reply-error {
+  color: var(--red);
 }
 .reply {
   display: flex;
@@ -1340,65 +1556,6 @@ kbd {
   background: var(--amber);
 }
 
-/* ─── Rail rows: ported from Zeron (crates/ui/src/shell.rs, motion.rs, loaders.rs) ─ */
-.rail-list {
-  padding: 4px 6px 0;
-  gap: 2px;
-}
-.rail-ws {
-  height: 28px;
-  margin-top: 12px;
-  padding: 0 8px;
-  gap: 4px;
-  background: transparent;
-  color: var(--text-4);
-  font-size: 13px;
-  font-weight: 500;
-}
-.rail-list > div:first-child > .rail-ws {
-  margin-top: 0;
-}
-.rail-ws:hover,
-.rail-ws.on {
-  background: transparent;
-  color: var(--text-3);
-  font-weight: 500;
-}
-.rail-ws .rail-caret {
-  order: 99;
-  color: var(--text-4);
-  transition: transform 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
-}
-.rail-ws .count {
-  display: none;
-}
-.rail-agent {
-  height: 29px;
-  gap: 4px;
-  margin: 0;
-  padding: 6px 8px;
-  border-radius: 8px;
-  color: color-mix(in srgb, var(--text) 80%, transparent);
-  font-size: 13px;
-  line-height: 17px;
-  font-weight: 400;
-  transition: background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1), color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-  animation: rail-in 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.rail-agent:hover {
-  background: rgba(235, 235, 235, 0.11);
-  color: var(--text);
-}
-.rail-agent.on {
-  background: rgba(255, 255, 255, 0.11);
-  color: var(--text);
-}
-:root[data-theme='light'] .rail-agent:hover {
-  background: rgba(26, 26, 26, 0.06);
-}
-:root[data-theme='light'] .rail-agent.on {
-  background: rgba(0, 0, 0, 0.06);
-}
 @keyframes rail-in {
   from { opacity: 0; transform: translateY(4px); }
 }
@@ -1410,17 +1567,14 @@ kbd {
   place-items: center;
 }
 .rail-check {
-  color: #34d399;
+  color: var(--green);
   opacity: 0.9;
 }
 .rail-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.14);
-}
-:root[data-theme='light'] .rail-dot {
-  background: rgba(0, 0, 0, 0.14);
+  background: var(--dot);
 }
 .rail-dot-waiting {
   background: color-mix(in srgb, var(--blue) 60%, transparent);

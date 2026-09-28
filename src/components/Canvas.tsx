@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { HARNESS_LABEL, MAIN_HARNESSES } from '../lib/agents';
 import { api, getState, patchSettings, setHidden, setPinned, setState, useStore } from '../lib/store';
 import type { Agent, HarnessId, Workspace } from '../lib/types';
 import { HarnessIcon, Icon } from './Icons';
@@ -26,15 +27,6 @@ export function showAgent(a: Agent) {
   setState({ focusedId: a.id, maximizedId: null });
 }
 
-const PICKS: { id: HarnessId; label: string }[] = [
-  { id: 'claude', label: 'Claude Code' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'pi', label: 'Pi' },
-  { id: 'devin', label: 'Devin' },
-  { id: 'droid', label: 'Droid' },
-  { id: 'shell', label: 'Terminal' },
-];
-
 export function AgentPicker({ workspace, onDone }: { workspace: Workspace | null; onDone?: () => void }) {
   const harnesses = useStore(s => s.harnesses);
   const home = useStore(s => s.home);
@@ -56,12 +48,13 @@ export function AgentPicker({ workspace, onDone }: { workspace: Workspace | null
   return (
     <>
       <div className="picker-grid">
-        {PICKS.map(p => {
-          const installed = Boolean(harnesses.find(h => h.id === p.id)?.bin);
+        {MAIN_HARNESSES.map(id => {
+          const installed = Boolean(harnesses.find(h => h.id === id)?.bin);
+          const label = HARNESS_LABEL[id];
           return (
-            <button key={p.id} className="pick" disabled={!installed || Boolean(busy)} onClick={() => launch(p.id)} title={installed ? '' : `${p.label} is not installed`}>
-              <HarnessIcon id={p.id} size={16} />
-              <span>{busy === p.id ? 'Starting…' : p.label}</span>
+            <button key={id} className="pick" disabled={!installed || Boolean(busy)} onClick={() => launch(id)} title={installed ? '' : `${label} is not installed`}>
+              <HarnessIcon id={id} size={16} />
+              <span>{busy === id ? 'Starting…' : label}</span>
               {!installed && <span className="pick-missing">not installed</span>}
             </button>
           );

@@ -3,6 +3,7 @@
  * Components read state with useStore(); terminals subscribe per agent.
  */
 import { type DragEvent, useRef, useSyncExternalStore } from 'react';
+import { harnessLabel } from './agents';
 import type { Agent, HarnessInfo, ModeInfo, Settings } from './types';
 
 const params = new URLSearchParams(location.search);
@@ -34,7 +35,6 @@ export interface State {
   hidden: string[];
   /** Workspaces shown beside the active one, in the order added. */
   pinned: string[];
-  seen: Record<string, number>;
 }
 
 const HIDDEN_KEY = 'bismind-hidden';
@@ -61,7 +61,6 @@ let state: State = {
   peeked: [],
   hidden: loadList(HIDDEN_KEY),
   pinned: loadList(PINNED_KEY),
-  seen: {},
 };
 
 const listeners = new Set<() => void>();
@@ -150,11 +149,11 @@ export function patchUi(patch: Partial<Settings['ui']>) {
 
 type DataSink = { write: (data: string) => void; reset: (snapshot: string) => void };
 const sinks = new Map<string, Set<DataSink>>();
-let ws: WebSocket | null = null;
+let socket: WebSocket | null = null;
 let retry = 0;
 
 function wsSend(msg: unknown) {
-  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg));
 }
 
 function upsert(agent: Agent) {
@@ -167,16 +166,16 @@ function upsert(agent: Agent) {
 
 export function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws?t=${encodeURIComponent(TOKEN)}`);
-  ws.onopen = () => {
+  socket = new WebSocket(`${proto}://${location.host}/ws?t=${encodeURIComponent(TOKEN)}`);
+  socket.onopen = () => {
     retry = 0;
     setState({ connected: true });
   };
-  ws.onclose = () => {
+  socket.onclose = () => {
     setState({ connected: false });
     setTimeout(connect, Math.min(4000, 400 * 2 ** retry++));
   };
-  ws.onmessage = ev => {
+  socket.onmessage = ev => {
     const msg = JSON.parse(String(ev.data));
     switch (msg.type) {
       case 'state':
@@ -246,6 +245,11 @@ export function tildify(path: string, home = state.home): string {
   return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
 }
 
+/** The last part of a folder path, or ~ for home. */
+export function folderName(path: string): string {
+  return tildify(path).split('/').pop() || '~';
+}
+
 export function elapsed(a: Agent, now = Date.now()): string {
   const start = a.workStartedAt ?? a.createdAt;
   const end = ['done', 'waiting', 'idle', 'exited', 'error'].includes(a.status) ? (a.finishedAt ?? a.updatedAt) : now;
@@ -255,11 +259,9 @@ export function elapsed(a: Agent, now = Date.now()): string {
   return m < 60 ? `${m}m ${String(s % 60).padStart(2, '0')}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-const HARNESS_LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', droid: 'Droid', shell: 'Terminal' };
-
 /** A reference to an agent that any other agent (or a human) can follow with `bismind read <id>`. */
 export function agentRef(a: Agent): string {
-  const who = `${a.name}, ${HARNESS_LABELS[a.harness] ?? a.harness} ${a.role === 'sub' ? 'sub-agent' : 'agent'}`;
+  const who = `${a.name}, ${harnessLabel(a.harness)} ${a.role === 'sub' ? 'sub-agent' : 'agent'}`;
   return `@bismind:${a.id} (${who}; read it: bismind read ${a.id}) `;
 }
 

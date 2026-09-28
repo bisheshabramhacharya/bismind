@@ -82,17 +82,6 @@ function base({ size = 18, className }: P) {
 }
 
 export const Icon = {
-  Logo: ({ size = 22 }: P) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
-      <defs>
-        <linearGradient id="bm-g" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#f5b83d" />
-          <stop offset="1" stopColor="#4f7cff" />
-        </linearGradient>
-      </defs>
-      <path d="M13.8 1.8 4.6 13.4h6.1l-1.9 8.8 10.6-12.6h-6.3z" fill="url(#bm-g)" />
-    </svg>
-  ),
   SidebarLeft: (p: P) => (
     <svg {...base(p)}>
       <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
@@ -111,12 +100,6 @@ export const Icon = {
       <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
       <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
       <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" />
-    </svg>
-  ),
-  Bell: (p: P) => (
-    <svg {...base(p)}>
-      <path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 1.5H5z" />
-      <path d="M10 20.5a2.2 2.2 0 0 0 4 0" />
     </svg>
   ),
   Plus: (p: P) => (

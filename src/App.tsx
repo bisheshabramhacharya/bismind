@@ -3,7 +3,10 @@ import { Canvas, PickerModal } from './components/Canvas';
 import { Dashboard } from './components/Dashboard';
 import { Icon } from './components/Icons';
 import { Rail } from './components/Rail';
+import { panelWidths } from './components/ResizeHandle';
+import { appShortcut } from './lib/shortcuts';
 import { TOKEN, getState, patchUi, useStore } from './lib/store';
+import { applyTheme } from './lib/themes';
 
 const LAYOUTS = ['stack', 'grid', 'columns'] as const;
 
@@ -40,11 +43,10 @@ export function App() {
   const connected = useStore(s => s.connected);
   const loaded = useStore(s => s.loaded);
   const [picker, setPicker] = useState(false);
-  const theme = settings?.ui.theme ?? 'dark';
+  const theme = settings?.ui.theme;
+  const accent = settings?.ui.accent;
 
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
+  useEffect(() => applyTheme({ theme, accent }), [theme, accent]);
 
   useEffect(() => {
     // Dropping a file or text outside a terminal must not navigate the window away.
@@ -59,14 +61,14 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.metaKey) return;
+      const action = appShortcut(e);
       const ui = getState().settings?.ui;
-      if (!ui) return;
-      const k = e.key.toLowerCase();
-      if (k === 'b' && e.shiftKey) (e.preventDefault(), patchUi({ dashboard: !ui.dashboard }));
-      else if (k === 'b') (e.preventDefault(), patchUi({ rail: !ui.rail }));
-      else if (k === 'j') (e.preventDefault(), patchUi({ showSubagents: !ui.showSubagents }));
-      else if (k === 'k') (e.preventDefault(), setPicker(true));
+      if (!action || !ui) return;
+      e.preventDefault();
+      if (action === 'dashboard') patchUi({ dashboard: !ui.dashboard });
+      else if (action === 'rail') patchUi({ rail: !ui.rail });
+      else if (action === 'subagents') patchUi({ showSubagents: !ui.showSubagents });
+      else setPicker(true);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -100,7 +102,7 @@ export function App() {
     <div className="app">
       <TopBar />
       {!connected && <div className="offline">Reconnecting to BisMind… your agents keep running.</div>}
-      <main className={`main ${settings.ui.rail ? '' : 'no-rail'} ${settings.ui.dashboard ? '' : 'no-dash'}`}>
+      <main className={`main ${settings.ui.rail ? '' : 'no-rail'} ${settings.ui.dashboard ? '' : 'no-dash'}`} style={panelWidths(settings.ui)}>
         {settings.ui.rail && <Rail onNew={() => setPicker(true)} />}
         <Canvas onNew={() => setPicker(true)} />
         {settings.ui.dashboard && <Dashboard />}
