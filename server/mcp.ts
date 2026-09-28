@@ -16,7 +16,7 @@ const TASK_SCHEMA = {
   properties: {
     task: { type: 'string', description: 'Complete, self-contained brief: goal, relevant files, constraints, how to verify, what to report. The sub-agent starts with zero context.' },
     name: { type: 'string', description: 'Short name for the pane, e.g. "auth-api". Defaults to one derived from the task.' },
-    harness: { type: 'string', enum: ['claude', 'codex', 'pi', 'devin'], description: "Only if the user asked for a specific harness. Defaults to the user's sub-agent mode." },
+    harness: { type: 'string', enum: ['claude', 'codex', 'pi', 'devin', 'droid'], description: "Only if the user asked for a specific harness. Defaults to the user's sub-agent mode." },
     model: { type: 'string', description: 'Only if the user asked for a specific model (pi uses "provider/model").' },
     thinking: { type: 'string', description: 'Reasoning effort: low, medium, high, xhigh, max.' },
     cwd: { type: 'string', description: "Working directory. Defaults to yours." },
@@ -31,11 +31,11 @@ const TOOLS = [
   {
     name: 'spawn_subagents',
     description:
-      "Start one or more sub-agents in parallel, each in a visible BisMind terminal pane, using the user's sub-agent mode (harness + model). Returns immediately with their ids. Put all independent tasks in ONE call, then end your turn: BisMind wakes you when one asks a question.",
+      "Start one or more sub-agents in parallel, each in a visible BisMind terminal pane, using the user's sub-agent mode (harness + model). Returns immediately with their ids. Beyond the user's run limit, extra ones are queued and start by themselves as others finish, so put ALL independent tasks in ONE call, then end your turn: BisMind wakes you when one asks a question.",
     inputSchema: {
       type: 'object',
       properties: {
-        tasks: { type: 'array', items: TASK_SCHEMA, minItems: 1, maxItems: 12 },
+        tasks: { type: 'array', items: TASK_SCHEMA, minItems: 1, maxItems: 24 },
         cwd: { type: 'string', description: 'Default working directory for every task.' },
       },
       required: ['tasks'],
@@ -191,7 +191,7 @@ async function handle(msg: { id?: number | string | null; method: string; params
             serverInfo: { name: 'bismind', version: '0.5.1' },
             instructions: IS_SUB
               ? 'You are a BisMind sub-agent. Use ask_parent when blocked on a decision only your parent can make; your final message is your report.'
-              : "BisMind runs sub-agents on any harness (pi, Codex, Claude Code, Devin) in visible terminal panes, using the user's chosen sub-agent mode. Spawn independent tasks together with spawn_subagents, then wait_subagents.",
+              : "BisMind runs sub-agents on any harness (pi, Codex, Claude Code, Devin, Droid) in visible terminal panes, using the user's chosen sub-agent mode. Spawn independent tasks together with spawn_subagents, then wait_subagents.",
           },
         });
       case 'ping':

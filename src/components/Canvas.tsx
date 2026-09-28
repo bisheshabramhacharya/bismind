@@ -31,6 +31,7 @@ const PICKS: { id: HarnessId; label: string }[] = [
   { id: 'codex', label: 'Codex' },
   { id: 'pi', label: 'Pi' },
   { id: 'devin', label: 'Devin' },
+  { id: 'droid', label: 'Droid' },
   { id: 'shell', label: 'Terminal' },
 ];
 

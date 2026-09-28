@@ -132,7 +132,7 @@ export default function bismind(pi: ExtensionAPI) {
   const Task = Type.Object({
     task: Type.String({ description: 'Complete, self-contained brief: goal, files, constraints, how to verify, what to report. The sub-agent starts with zero context.' }),
     name: Type.Optional(Type.String({ description: 'Short pane name, e.g. "auth-api".' })),
-    harness: Type.Optional(Type.String({ description: 'claude | codex | pi | devin — only if the user asked for one.' })),
+    harness: Type.Optional(Type.String({ description: 'claude | codex | pi | devin | droid — only if the user asked for one.' })),
     model: Type.Optional(Type.String({ description: 'Only if the user asked for a specific model.' })),
     thinking: Type.Optional(Type.String()),
     cwd: Type.Optional(Type.String()),
@@ -144,8 +144,8 @@ export default function bismind(pi: ExtensionAPI) {
     name: 'spawn_subagents',
     label: 'Spawn sub-agents',
     description:
-      "Start sub-agents in parallel, each in a visible BisMind terminal pane, on the user's sub-agent mode. Returns immediately. A question from a sub-agent arrives as a message and wakes you; finished reports reach you on your next turn. Do NOT poll, sleep, or read their screens in a loop. Put all independent tasks in ONE call.",
-    parameters: Type.Object({ tasks: Type.Array(Task, { minItems: 1, maxItems: 12 }), cwd: Type.Optional(Type.String()) }),
+      "Start sub-agents in parallel, each in a visible BisMind terminal pane, on the user's sub-agent mode. Returns immediately; beyond the user's run limit, extra ones queue and start by themselves. A question from a sub-agent arrives as a message and wakes you; finished reports reach you on your next turn. Do NOT poll, sleep, or read their screens in a loop. Put all independent tasks in ONE call.",
+    parameters: Type.Object({ tasks: Type.Array(Task, { minItems: 1, maxItems: 24 }), cwd: Type.Optional(Type.String()) }),
     async execute(_id, params: any) {
       const out = await api('/api/subagents', { parentId: AGENT_ID, tasks: params.tasks, cwd: params.cwd ?? process.cwd() }, 120_000);
       return text({ ...out, next: 'Running. End your turn now unless you need their results to continue; a question from one wakes you.' });

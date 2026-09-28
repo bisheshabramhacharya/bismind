@@ -17,6 +17,8 @@ import { modeInfo, reviewSubagents, spawnSubagents, summarize, waitFor } from '.
 import { tmux, writeTmuxConf } from './tmux.ts';
 
 process.removeAllListeners('warning');
+// Started from the Dock there is no locale, and tmux would then draw every non-ASCII character as "_".
+if (!process.env.LANG && !process.env.LC_ALL && !process.env.LC_CTYPE) process.env.LANG = 'en_US.UTF-8';
 const TOKEN = readToken();
 const DIST = join(REPO, 'dist');
 
@@ -74,7 +76,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     const patch: Partial<Settings> = {};
     if (typeof b.modeSpec === 'string') patch.mode = parseModeSpec(b.modeSpec);
     if (b.mode && typeof b.mode === 'object') {
-      if (!['native', 'claude', 'codex', 'pi', 'devin'].includes(b.mode.harness)) throw new HttpError(400, 'mode.harness must be native, claude, codex, pi or devin');
+      if (!['native', 'claude', 'codex', 'pi', 'devin', 'droid'].includes(b.mode.harness)) throw new HttpError(400, 'mode.harness must be native, claude, codex, pi, devin or droid');
       patch.mode = {
         harness: b.mode.harness,
         model: typeof b.mode.model === 'string' && b.mode.model ? b.mode.model : null,
@@ -82,11 +84,16 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
       };
     }
     if (b.autonomy === 'full' || b.autonomy === 'ask') patch.autonomy = b.autonomy;
+    if ('maxRunning' in b) {
+      const n = Number(b.maxRunning);
+      if (!Number.isInteger(n) || n < 1 || n > 24) throw new HttpError(400, 'maxRunning must be a whole number from 1 to 24');
+      patch.maxRunning = n;
+    }
     if (b.ui) patch.ui = b.ui;
     if ('activeWorkspace' in b) patch.activeWorkspace = b.activeWorkspace;
     if (b.review && typeof b.review === 'object') {
       const r = b.review;
-      if (!['mode', 'claude', 'codex', 'pi', 'devin'].includes(r.harness)) throw new HttpError(400, 'review.harness must be mode, claude, codex, pi or devin');
+      if (!['mode', 'claude', 'codex', 'pi', 'devin', 'droid'].includes(r.harness)) throw new HttpError(400, 'review.harness must be mode, claude, codex, pi, devin or droid');
       patch.review = {
         harness: r.harness,
         model: typeof r.model === 'string' && r.model ? r.model : null,
@@ -96,6 +103,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     }
     const next = patchSettings(patch);
     broadcastSettings(next);
+    if (patch.maxRunning) agents.drain();
     return send(res, 200, { settings: next, mode: modeInfo() });
   }
 
@@ -322,6 +330,10 @@ function flushData() {
   pendingSize = 0;
 }
 agents.on('data', ({ id, chunk }: { id: string; chunk: string }) => {
+  // Unwatched agents' output only goes to their ring; a viewer that attaches later gets a snapshot.
+  let watched = false;
+  for (const subs of viewers.values()) if (subs.has(id)) watched = true;
+  if (!watched) return;
   pending.set(id, (pending.get(id) ?? '') + chunk);
   pendingSize += chunk.length;
   if (pendingSize >= FLUSH_LIMIT) flushData();
@@ -377,6 +389,12 @@ server.on('upgrade', (req, socket, head) => {
 async function main() {
   // One bad async path must not take every agent's bookkeeping down with it.
   process.on('unhandledRejection', err => console.error('[bismind] unhandled rejection', err));
+  // Registry writes are coalesced; write the last ones before going away.
+  for (const sig of ['SIGTERM', 'SIGINT'] as const)
+    process.on(sig, () => {
+      agents.flush();
+      process.exit(0);
+    });
   if (!tmux.available) console.error('[bismind] tmux is not installed; run `brew install tmux`');
   writeTmuxConf();
   await agents.start();

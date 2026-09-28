@@ -5,6 +5,7 @@ import { HarnessIcon, Icon } from './Icons';
 import { Terminal } from './Terminal';
 
 export const STATUS_LABEL: Record<Agent['status'], string> = {
+  queued: 'queued',
   starting: 'starting',
   working: 'working',
   idle: 'idle',
@@ -183,7 +184,7 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
         )}
         {agent.role === 'sub' && (
           <span className={`state state-${agent.status}`}>
-            {STATUS_LABEL[agent.status]} <Elapsed agent={agent} />
+            {STATUS_LABEL[agent.status]} {agent.status !== 'queued' && <Elapsed agent={agent} />}
           </span>
         )}
         <div className="pane-actions">
@@ -212,7 +213,11 @@ export function Pane({ agent, onNew }: { agent: Agent; onNew: () => void }) {
         </div>
       )}
       <div className="pane-body">
-        <Terminal agentId={agent.id} focused={focused} onFocus={focus} />
+        {agent.status === 'queued' ? (
+          <p className="pane-queued">Queued. It starts when a running sub-agent finishes.</p>
+        ) : (
+          <Terminal agentId={agent.id} focused={focused} onFocus={focus} />
+        )}
       </div>
       {agent.role === 'main' && <SubTray parent={agent} />}
     </section>

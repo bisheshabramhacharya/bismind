@@ -10,6 +10,7 @@ const HARNESSES: { id: SubagentMode['harness']; label: string }[] = [
   { id: 'codex', label: 'Codex' },
   { id: 'claude', label: 'Claude' },
   { id: 'devin', label: 'Devin' },
+  { id: 'droid', label: 'Droid' },
   { id: 'native', label: 'Native' },
 ];
 const REVIEW_HARNESSES: { id: ReviewAgent['harness']; label: string }[] = [
@@ -18,9 +19,11 @@ const REVIEW_HARNESSES: { id: ReviewAgent['harness']; label: string }[] = [
   { id: 'codex', label: 'Codex' },
   { id: 'claude', label: 'Claude' },
   { id: 'devin', label: 'Devin' },
+  { id: 'droid', label: 'Droid' },
 ];
 const THINKING = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
-const LABEL: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', shell: 'Terminal' };
+const MAX_RUNNING = [1, 2, 3, 4, 6, 8, 12, 16, 24];
+const LABEL: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', droid: 'Droid', shell: 'Terminal' };
 
 function ModelPicker({ harness, value, onChange }: { harness: string; value: string | null; onChange: (m: string | null) => void }) {
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -141,6 +144,16 @@ function ModeCard() {
                   ))}
                 </select>
               </label>
+              <label className="setting">
+                <span className="setting-label">Run at once</span>
+                <select className="field" value={settings.maxRunning} onChange={e => void patchSettings({ maxRunning: Number(e.target.value) })}>
+                  {MAX_RUNNING.map(n => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <div className="setting">
                 <span className="setting-label">Sub-agent panes</span>
                 <div className="seg">
@@ -214,6 +227,8 @@ function stateText(a: Agent): string {
   switch (a.status) {
     case 'waiting':
       return `Needs you ${t}`;
+    case 'queued':
+      return 'Queued';
     case 'working':
     case 'starting':
       return `Working ${t}`;
@@ -383,6 +398,7 @@ export function Dashboard() {
   useTick(agents.some(a => ['working', 'starting', 'waiting'].includes(a.status)));
   const needs = agents.filter(a => a.status === 'waiting');
   const working = agents.filter(a => ['working', 'starting'].includes(a.status));
+  const queued = agents.filter(a => a.status === 'queued');
   const done = agents.filter(a => a.role === 'sub' && a.status === 'done');
   const idle = agents.filter(a => a.role === 'main' && ['idle', 'done'].includes(a.status));
   const ended = agents.filter(a => ['exited', 'error'].includes(a.status));
@@ -439,6 +455,7 @@ export function Dashboard() {
         )}
         {group('Needs you', needs)}
         {group('Working', working)}
+        {group('Queued', queued)}
         {group('Done', done)}
         {group('Idle', idle)}
         {group('Ended', ended)}

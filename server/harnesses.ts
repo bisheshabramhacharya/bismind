@@ -18,7 +18,7 @@ export interface HarnessInfo {
   canOrchestrate: boolean;
 }
 
-const LABELS: Record<HarnessId, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', shell: 'Terminal' };
+const LABELS: Record<HarnessId, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', droid: 'Droid', shell: 'Terminal' };
 
 const SEARCH_PATH = [
   process.env.PATH ?? '',
@@ -45,6 +45,7 @@ export function harnesses(refresh = false): HarnessInfo[] {
     { id: 'codex', label: LABELS.codex, bin: which('codex'), reportsTurns: true, canOrchestrate: true },
     { id: 'pi', label: LABELS.pi, bin: which('pi'), reportsTurns: true, canOrchestrate: true },
     { id: 'devin', label: LABELS.devin, bin: which('devin'), reportsTurns: false, canOrchestrate: false },
+    { id: 'droid', label: LABELS.droid, bin: which('droid'), reportsTurns: false, canOrchestrate: false },
     { id: 'shell', label: LABELS.shell, bin: shellBin, reportsTurns: false, canOrchestrate: false },
   ];
   return cache;
@@ -52,7 +53,7 @@ export function harnesses(refresh = false): HarnessInfo[] {
 
 export function harness(id: string): HarnessInfo {
   const h = harnesses().find(x => x.id === id);
-  if (!h) throw new Error(`unknown harness "${id}" — use claude, codex, pi, devin or shell`);
+  if (!h) throw new Error(`unknown harness "${id}" — use claude, codex, pi, devin, droid or shell`);
   if (!h.bin) throw new Error(`${h.label} is not installed on this machine`);
   return h;
 }
@@ -116,14 +117,17 @@ export function writeLaunch(input: LaunchInput): string {
           parentLabel: input.parentLabel ?? 'the orchestrator',
           cwd: input.cwd,
           worktree: input.worktree,
-          askHow: input.harness === 'devin' ? 'run `bismind ask "<one self-contained question>"` in the shell' : 'call the `ask_parent` tool with one self-contained question',
-          // Devin has no turn hook, so it hands its report over explicitly.
-          reportVia: input.harness === 'devin' ? 'shell' : 'final-message',
+          askHow: input.harness === 'devin' || input.harness === 'droid' ? 'run `bismind ask "<one self-contained question>"` in the shell' : 'call the `ask_parent` tool with one self-contained question',
+          // Devin and Droid have no turn hook, so they hand their report over explicitly.
+          reportVia: input.harness === 'devin' || input.harness === 'droid' ? 'shell' : 'final-message',
           issue: input.issue,
         })
       : input.orchestrate
         ? orchestratorPrompt({ toolStyle: input.harness === 'pi' ? 'pi' : 'mcp' })
         : null;
+  // Built-in sub-agents are removed at launch (sub-agents never fan out; main agents use the mode),
+  // so the harness goes straight to BisMind's tools instead of trying its own first.
+  const noNative = input.role === 'sub' || input.orchestrate;
   const promptFile = join(input.agentDir, 'prompt.md');
   const argv: string[] = [h.bin!];
   let prompt: string | null = input.task;
@@ -147,6 +151,7 @@ export function writeLaunch(input: LaunchInput): string {
         JSON.stringify({ mcpServers: { bismind: { type: 'stdio', command: process.execPath, args: [BIN, 'mcp'], env: { BISMIND_AGENT_ID: input.id, BISMIND_ROLE: input.role } } } }, null, 2),
       );
       argv.push('--settings', settingsPath, '--mcp-config', mcpPath);
+      if (noNative) argv.push('--disallowedTools=Agent,Task');
       if (guidance) argv.push('--append-system-prompt', guidance);
       if (input.model) argv.push('--model', input.model);
       if (input.thinking) argv.push('--effort', input.thinking);
@@ -163,6 +168,7 @@ export function writeLaunch(input: LaunchInput): string {
         // An "update available" menu at startup would block a sub-agent that nobody is watching.
         '-c', 'check_for_update_on_startup=false',
       );
+      if (noNative) argv.push('--disable', 'multi_agent', '--disable', 'multi_agent_v2');
       if (guidance) argv.push('-c', `developer_instructions=${JSON.stringify(guidance)}`);
       if (input.model) argv.push('-m', input.model);
       if (input.thinking) argv.push('-c', `model_reasoning_effort=${JSON.stringify(input.thinking)}`);
@@ -192,6 +198,12 @@ export function writeLaunch(input: LaunchInput): string {
         argv.push('--prompt-file', promptFile);
         prompt = null;
       }
+      break;
+    }
+    case 'droid': {
+      // Interactive droid has no model flag, so it uses the model chosen in Droid's own settings.
+      if (guidance) argv.push('--append-system-prompt', guidance);
+      if (full) argv.push('--auto', 'high');
       break;
     }
     case 'shell':

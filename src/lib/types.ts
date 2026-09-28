@@ -1,5 +1,5 @@
-export type HarnessId = 'claude' | 'codex' | 'pi' | 'devin' | 'shell';
-export type AgentStatus = 'starting' | 'working' | 'idle' | 'done' | 'waiting' | 'exited' | 'error';
+export type HarnessId = 'claude' | 'codex' | 'pi' | 'devin' | 'droid' | 'shell';
+export type AgentStatus = 'queued' | 'starting' | 'working' | 'idle' | 'done' | 'waiting' | 'exited' | 'error';
 
 export interface Agent {
   id: string;
@@ -54,6 +54,7 @@ export interface Settings {
   mode: SubagentMode;
   review: ReviewAgent;
   autonomy: 'full' | 'ask';
+  maxRunning: number;
   workspaces: Workspace[];
   activeWorkspace: string | null;
   ui: { theme: 'dark' | 'light'; layout: 'stack' | 'grid' | 'columns'; showSubagents: boolean; rail: boolean; dashboard: boolean };

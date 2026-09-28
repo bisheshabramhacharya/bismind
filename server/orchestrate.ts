@@ -21,13 +21,14 @@ export interface TaskSpec {
 
 export async function spawnSubagents(parentId: string | null, tasks: TaskSpec[], cwd?: string) {
   if (!Array.isArray(tasks) || tasks.length === 0) throw new Error('tasks must be a non-empty array');
-  if (tasks.length > 12) throw new Error('at most 12 sub-agents per call');
+  if (tasks.length > 24) throw new Error('at most 24 sub-agents per call');
   const parent = parentId ? agents.get(parentId) : null;
   if (parent?.role === 'sub') throw new Error("sub-agents can't spawn sub-agents; do the work yourself or say what's needed in your report");
   const mode = readSettings().mode;
   const defaultHarness: HarnessId = mode.harness === 'native' ? (parent?.harness ?? 'claude') : mode.harness;
+  // async, so a bad task rejects on its own instead of throwing past tasks that already started.
   const results = await Promise.allSettled(
-    tasks.map(t => {
+    tasks.map(async t => {
       if (!t?.task?.trim()) throw new Error('every task needs a "task" brief');
       if (t.issue !== undefined && !(Number.isInteger(t.issue) && t.issue > 0)) throw new Error('issue must be a GitHub issue number');
       const h = t.harness ?? defaultHarness;
@@ -49,8 +50,8 @@ export async function spawnSubagents(parentId: string | null, tasks: TaskSpec[],
   );
   return results.map((r, i) =>
     r.status === 'fulfilled'
-      ? { ok: true as const, id: r.value.id, name: r.value.name, harness: r.value.harness, model: r.value.model, cwd: r.value.cwd, branch: r.value.worktree?.branch ?? null }
-      : { ok: false as const, task: tasks[i].name ?? tasks[i].task.slice(0, 60), error: r.reason instanceof Error ? r.reason.message : String(r.reason) },
+      ? { ok: true as const, id: r.value.id, name: r.value.name, status: r.value.status, harness: r.value.harness, model: r.value.model, cwd: r.value.cwd, branch: r.value.worktree?.branch ?? null }
+      : { ok: false as const, task: tasks[i]?.name ?? String(tasks[i]?.task ?? '').slice(0, 60), error: r.reason instanceof Error ? r.reason.message : String(r.reason) },
   );
 }
 
@@ -75,7 +76,7 @@ export async function reviewSubagents(parentId: string, ids?: string[]) {
   const sameAsMode = review.harness === 'mode';
   const harness: HarnessId = review.harness !== 'mode' ? review.harness : mode.harness === 'native' ? parent.harness : mode.harness;
   const results = await Promise.allSettled(
-    targets.map(t => {
+    targets.map(async t => {
       if (!t.worktree) throw new Error(`${t.name} has no branch of its own to review`);
       return agents.spawn({
         role: 'sub',
@@ -131,14 +132,18 @@ export async function waitFor(parentId: string | null, ids: string[] | undefined
     ? ids.map(id => agents.must(id).id)
     : parentId
       ? agents.children(parentId).map(a => a.id)
-      : agents.list().filter(a => a.role === 'sub' && !a.parentId && ['starting', 'working', 'idle'].includes(a.status)).map(a => a.id);
+      : agents.list().filter(a => a.role === 'sub' && !a.parentId && ['queued', 'starting', 'working', 'idle'].includes(a.status)).map(a => a.id);
   if (!targets.length) return { timed_out: false, note: 'No sub-agents to wait for.', subagents: [] };
   if (parentId) agents.beginWait(parentId);
   const { timedOut, agents: list } = await agents.wait(targets, until, timeoutMs, signal).finally(() => parentId && agents.endWait(parentId, !signal?.aborted));
   const subagents = await Promise.all(list.map(a => summarize(a, true)));
   const waiting = list.filter(a => a.status === 'waiting');
-  const running = list.filter(a => ['starting', 'working', 'idle'].includes(a.status));
-  let note = timedOut ? `Timed out with ${running.length} still running. Call wait_subagents again to keep waiting.` : 'Sub-agents settled.';
+  const running = list.filter(a => ['queued', 'starting', 'working', 'idle'].includes(a.status));
+  let note = timedOut
+    ? `Timed out with ${running.length} still running. Call wait_subagents again to keep waiting.`
+    : running.length
+      ? `${running.length} still running.`
+      : 'Sub-agents settled.';
   if (waiting.length) note += ` ${waiting.map(a => a.name).join(', ')} asked a question: answer with message_subagent, then wait again.`;
   return { timed_out: timedOut, note, subagents };
 }
@@ -149,6 +154,7 @@ export function modeInfo() {
     mode: s.mode,
     description: describeMode(s.mode),
     autonomy: s.autonomy,
+    maxRunning: s.maxRunning,
     harnesses: harnesses()
       .filter(h => h.id !== 'shell')
       .map(h => ({ id: h.id, label: h.label, installed: Boolean(h.bin) })),

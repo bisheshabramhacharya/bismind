@@ -14,7 +14,7 @@ import { harness, harnessLabel, harnesses, writeLaunch } from './harnesses.ts';
 import { tmux } from './tmux.ts';
 import { generateTitle } from './titles.ts';
 
-export type AgentStatus = 'starting' | 'working' | 'idle' | 'done' | 'waiting' | 'exited' | 'error';
+export type AgentStatus = 'queued' | 'starting' | 'working' | 'idle' | 'done' | 'waiting' | 'exited' | 'error';
 
 export interface Agent {
   id: string;
@@ -79,6 +79,8 @@ export interface Notice {
 }
 
 const SETTLED: AgentStatus[] = ['done', 'waiting', 'exited', 'error'];
+/** Statuses that count against the run queue's limit. */
+const RUNNING: AgentStatus[] = ['starting', 'working'];
 const IDLE_AFTER_MS = 2500;
 /** Devin has no turn hook and finishes with `bismind done`; if it forgets, call its turn over after this long without output. */
 const DEVIN_DONE_AFTER_MS = 45_000;
@@ -129,12 +131,13 @@ export class Agents extends EventEmitter {
   async start() {
     for (const a of readJson<Agent[]>(REGISTRY_PATH, [])) this.agents.set(a.id, a);
     await this.reconcile();
-    for (const a of this.agents.values()) if (!['exited', 'error'].includes(a.status)) this.attach(a.id);
+    for (const a of this.agents.values()) if (!['exited', 'error', 'queued'].includes(a.status)) this.attach(a.id);
     this.tick = setInterval(() => this.onTick(), 1000);
     this.scheduleReconcile(4000);
+    this.drain();
     // Agents from before titles existed: name them from what's on their screen.
     for (const a of this.agents.values()) {
-      if (a.title || a.harness === 'shell' || ['exited', 'error'].includes(a.status)) continue;
+      if (a.title || a.harness === 'shell' || ['exited', 'error', 'queued'].includes(a.status)) continue;
       if (a.task) this.nameFrom(a.id, a.task);
       else void this.screen(a.id, 200).then(text => text.trim() && this.nameFrom(a.id, text)).catch(() => undefined);
     }
@@ -171,7 +174,16 @@ export class Agents extends EventEmitter {
     return this.list().filter(a => a.parentId === parentId);
   }
 
+  private saveTimer: NodeJS.Timeout | null = null;
+  /** Coalesced: a burst of status and progress updates from many sub-agents writes the registry once. */
   private save() {
+    this.saveTimer ??= setTimeout(() => this.flush(), 250);
+  }
+
+  /** Write the registry now (also on shutdown, so the last updates aren't lost). */
+  flush() {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = null;
     // A full disk or bad permissions must not take the server (and every agent's bookkeeping) down.
     try {
       writeJson(REGISTRY_PATH, this.list());
@@ -193,11 +205,55 @@ export class Agents extends EventEmitter {
     if (!a) return;
     if (a.status === status && Object.keys(patch).length === 0) return;
     const becameWorking = status === 'working' && a.status !== 'working';
-    if (['starting', 'working'].includes(status) && this.reconcileDelay > 4000) this.scheduleReconcile(4000);
+    const stoppedRunning = RUNNING.includes(a.status) && !RUNNING.includes(status);
+    if (RUNNING.includes(status) && this.reconcileDelay > 4000) this.scheduleReconcile(4000);
     this.update(id, { ...patch, status, ...(becameWorking ? { workStartedAt: Date.now(), finishedAt: null } : {}) });
     if (SETTLED.includes(status)) {
       const live = this.live.get(id);
       if (live) live.settledAt = Date.now();
+    }
+    if (stoppedRunning && a.role === 'sub') this.drain();
+  }
+
+  // ─── Run queue ────────────────────────────────────────────────────────────────────
+  // At most `maxRunning` sub-agents work at once; the rest wait as "queued" and start in
+  // order as others finish, so a big batch can't exhaust the machine.
+
+  /** Sub-agents launching right now (not yet in `agents`, or still marked queued). */
+  private launching = new Set<string>();
+
+  private runningSubs(): number {
+    let n = this.launching.size;
+    for (const a of this.agents.values()) if (a.role === 'sub' && RUNNING.includes(a.status) && !this.launching.has(a.id)) n += 1;
+    return n;
+  }
+
+  /** Start queued sub-agents while there is room. Called when one stops running, one is closed, or the limit changes. */
+  drain() {
+    const max = readSettings().maxRunning;
+    for (const a of this.list()) {
+      if (this.runningSubs() >= max) return;
+      if (a.status === 'queued' && !this.launching.has(a.id)) void this.launchQueued(a.id);
+    }
+  }
+
+  private async launchQueued(id: string) {
+    const a = this.agents.get(id);
+    const input = readJson<SpawnInput | null>(join(AGENTS_DIR, id, 'spawn.json'), null);
+    if (!a || !input) return this.agents.has(id) && this.setStatus(id, 'error', { result: '[BisMind: this queued sub-agent lost its brief; spawn it again.]' });
+    this.launching.add(id);
+    try {
+      const launched = await this.launch(a, input);
+      if (!this.agents.has(id)) return void tmux.kill(a.session); // closed while it was starting
+      this.setStatus(id, 'starting', { ...launched, workStartedAt: Date.now() });
+      this.attach(id, input.cols ?? 160, input.rows ?? 48);
+      void this.autoTrust(id);
+    } catch (err) {
+      this.setStatus(id, 'error', { result: `[BisMind: could not start: ${err instanceof Error ? err.message : String(err)}]`, finishedAt: Date.now() });
+      if (a.parentId) this.notify(a, 'exited');
+    } finally {
+      this.launching.delete(id);
+      this.drain();
     }
   }
 
@@ -246,7 +302,7 @@ export class Agents extends EventEmitter {
     const kids = this.children(parentId);
     const asking = kids.filter(k => k.status === 'waiting').map(k => k.name);
     const done = kids.filter(k => ['done', 'exited', 'error'].includes(k.status)).map(k => k.name);
-    const running = kids.filter(k => ['starting', 'working'].includes(k.status)).length;
+    const running = kids.filter(k => ['queued', 'starting', 'working'].includes(k.status)).length;
     this.pendingWake.delete(parentId);
     if (!asking.length) return; // answered already
     const parts = [
@@ -276,7 +332,65 @@ export class Agents extends EventEmitter {
     this.reserved.add(name);
     const agentDir = join(AGENTS_DIR, id);
     mkdirSync(agentDir, { recursive: true });
+    const now = Date.now();
+    const agent: Agent = {
+      id,
+      name,
+      harness: h.id,
+      model: input.model ?? null,
+      thinking: input.thinking ?? null,
+      cwd: input.cwd,
+      workspaceId: input.workspaceId ?? parent?.workspaceId ?? null,
+      role,
+      parentId: parent?.id ?? null,
+      task: input.task ?? null,
+      status: 'starting',
+      result: null,
+      question: null,
+      progress: null,
+      exitCode: null,
+      turns: 0,
+      createdAt: now,
+      updatedAt: now,
+      workStartedAt: role === 'sub' ? now : null,
+      finishedAt: null,
+      worktree: null,
+      issue: input.issue ?? null,
+      reviewOf: input.reviewOf ?? null,
+      session: `bm-${id}`,
+    };
 
+    // Checked and claimed synchronously, so a parallel batch can't all see a free slot.
+    const queued = role === 'sub' && this.runningSubs() >= readSettings().maxRunning;
+    if (!queued) this.launching.add(id);
+    try {
+      if (queued) {
+        writeJson(join(agentDir, 'spawn.json'), input);
+        Object.assign(agent, { status: 'queued', workStartedAt: null });
+      } else Object.assign(agent, await this.launch(agent, input));
+      this.agents.set(id, agent);
+      this.save();
+      if (!queued) {
+        this.attach(id, input.cols ?? 160, input.rows ?? 48);
+        // The user picked this folder (a workspace, or a parent's cwd), so accept first-run trust gates.
+        void this.autoTrust(id);
+      }
+      this.emit('agent', { ...agent });
+      if (agent.task) this.nameFrom(id, agent.task);
+      return { ...agent };
+    } catch (err) {
+      // Don't leave a half-made agent behind.
+      rmSync(agentDir, { recursive: true, force: true });
+      throw err;
+    } finally {
+      this.reserved.delete(name);
+      if (this.launching.delete(id)) this.drain();
+    }
+  }
+
+  /** Make the worktree (if any) and start the harness in tmux. Returns the agent's final cwd and worktree. */
+  private async launch(agent: Agent, input: SpawnInput): Promise<Pick<Agent, 'cwd' | 'worktree'>> {
+    const { id, name } = agent;
     let cwd = input.cwd;
     let worktree: Agent['worktree'] = null;
     try {
@@ -291,71 +405,29 @@ export class Agents extends EventEmitter {
         worktree = { path, branch, repo, base };
         cwd = join(path, relative(repo, input.cwd));
       }
-
-      const settings = readSettings();
-      const now = Date.now();
-      const agent: Agent = {
-        id,
-        name,
-        harness: h.id,
-        model: input.model ?? null,
-        thinking: input.thinking ?? null,
-        cwd,
-        workspaceId: input.workspaceId ?? parent?.workspaceId ?? null,
-        role,
-        parentId: parent?.id ?? null,
-        task: input.task ?? null,
-        status: 'starting',
-        result: null,
-        question: null,
-        progress: null,
-        exitCode: null,
-        turns: 0,
-        createdAt: now,
-        updatedAt: now,
-        workStartedAt: role === 'sub' ? now : null,
-        finishedAt: null,
-        worktree,
-        issue: input.issue ?? null,
-        reviewOf: input.reviewOf ?? null,
-        session: `bm-${id}`,
-      };
-
+      const parent = agent.parentId ? this.agents.get(agent.parentId) : null;
       const script = writeLaunch({
         id,
         name,
-        harness: h.id,
-        role,
+        harness: agent.harness,
+        role: agent.role,
         cwd,
         model: agent.model,
         thinking: agent.thinking,
         task: agent.task,
         parentLabel: parent ? `${parent.name}, running ${harnessLabel(parent.harness)}` : null,
         worktree,
-        issue: input.issue ?? null,
-        agentDir,
-        orchestrate: settings.mode.harness !== 'native',
+        issue: agent.issue ?? null,
+        agentDir: join(AGENTS_DIR, id),
+        orchestrate: readSettings().mode.harness !== 'native',
       });
-
-      const cols = input.cols ?? 160;
-      const rows = input.rows ?? 48;
-      await tmux.newSession(agent.session, cwd, script, cols, rows);
-      this.agents.set(id, agent);
-      this.save();
-      this.attach(id, cols, rows);
-      this.emit('agent', { ...agent });
-      if (agent.task) this.nameFrom(id, agent.task);
-      // The user picked this folder (a workspace, or a parent's cwd), so accept first-run trust gates.
-      void this.autoTrust(id);
-      return { ...agent };
+      await tmux.newSession(agent.session, cwd, script, input.cols ?? 160, input.rows ?? 48);
+      return { cwd, worktree };
     } catch (err) {
-      // Don't leave a half-made agent behind in the user's repo.
-      rmSync(agentDir, { recursive: true, force: true });
+      // Don't leave a half-made worktree behind in the user's repo.
       const w = worktree as Agent['worktree'];
       if (w) await git(w.repo, ['worktree', 'remove', '--force', w.path]).then(() => git(w.repo, ['branch', '-D', w.branch])).catch(() => undefined);
       throw err;
-    } finally {
-      this.reserved.delete(name);
     }
   }
 
@@ -388,7 +460,7 @@ export class Agents extends EventEmitter {
   /** One node-pty client per agent attached to its tmux session; the browser views stream through it. */
   attach(id: string, cols = 160, rows = 48) {
     const a = this.agents.get(id);
-    if (!a || this.live.get(id)?.proc) return;
+    if (!a || a.status === 'queued' || this.live.get(id)?.proc) return;
     const live: Live = this.live.get(id) ?? { proc: null, ring: '', lastOutputAt: 0, settledAt: 0, cols, rows };
     this.live.set(id, live);
     const { file, args } = tmux.attachArgv(a.session);
@@ -401,7 +473,9 @@ export class Agents extends EventEmitter {
     }
     live.proc = proc;
     proc.onData(chunk => {
-      live.ring = (live.ring + chunk).slice(-RING_LIMIT);
+      // Trim only past twice the limit: slicing on every chunk copied 400 KB per chunk per agent.
+      live.ring += chunk;
+      if (live.ring.length > 2 * RING_LIMIT) live.ring = live.ring.slice(-RING_LIMIT);
       live.lastOutputAt = Date.now();
       this.emit('data', { id, chunk });
     });
@@ -416,7 +490,7 @@ export class Agents extends EventEmitter {
     if (!ring) return '';
     // tmux enables the alternate screen and mouse reporting once, at attach; the ring has usually
     // dropped those bytes. Without them xterm turns the wheel into ↑/↓ keys (prompt history).
-    return '\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h' + ring;
+    return '\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h' + ring.slice(-RING_LIMIT);
   }
 
   write(id: string, data: string) {
@@ -452,6 +526,7 @@ export class Agents extends EventEmitter {
   async message(idOrName: string, text: string) {
     const a = this.must(idOrName);
     if (['exited', 'error'].includes(a.status)) throw new Error(`${a.name} has exited; spawn a new sub-agent instead`);
+    if (a.status === 'queued') throw new Error(`${a.name} is queued and hasn't started yet; it starts when a running sub-agent finishes`);
     await tmux.paste(a.session, text, true);
     this.setStatus(a.id, 'working', { question: null });
   }
@@ -474,6 +549,7 @@ export class Agents extends EventEmitter {
     rmSync(join(AGENTS_DIR, a.id), { recursive: true, force: true });
     this.save();
     this.emit('removed', { id: a.id });
+    this.drain();
     // Drop its worktree folder but keep the branch (and its commits). Git refuses when there are
     // uncommitted changes, which is what we want; skip it while another agent (a reviewer) works there.
     const w = a.worktree;
@@ -528,6 +604,8 @@ export class Agents extends EventEmitter {
     const a = this.agents.get(id);
     if (!a) return;
     const result = message?.trim() || a.result;
+    // A hook's retry after a slow first attempt must not report the same turn twice.
+    if (a.status === 'done' && message?.trim() === a.result) return;
     const turns = a.turns + 1;
     if (a.question) {
       this.setStatus(id, 'waiting', { result, turns });
@@ -568,10 +646,15 @@ export class Agents extends EventEmitter {
 
   /** Resolve when `until` is met for `ids`: all settled, or any settled. */
   wait(ids: string[], until: 'all' | 'any', timeoutMs: number, signal?: AbortSignal): Promise<{ timedOut: boolean; agents: Agent[] }> {
+    // "any" means one that was still running when the wait began, or a batch finished earlier would end it at once.
+    const running = new Set(ids.filter(id => { const a = this.agents.get(id); return a && !SETTLED.includes(a.status); }));
     const check = () => {
       const agents = ids.map(id => this.agents.get(id)).filter((a): a is Agent => Boolean(a));
       const settled = agents.filter(a => SETTLED.includes(a.status));
-      const ok = agents.length === 0 || (until === 'all' ? settled.length === agents.length : settled.length > 0);
+      // A new question ends the wait: the asker is blocked until the parent answers.
+      const asking = agents.some(a => a.status === 'waiting' && running.has(a.id));
+      const anyDone = running.size === 0 || settled.some(a => running.has(a.id));
+      const ok = agents.length === 0 || asking || (until === 'all' ? settled.length === agents.length : anyDone);
       return ok ? agents : null;
     };
     const now = check();
@@ -581,17 +664,19 @@ export class Agents extends EventEmitter {
         const hit = check();
         if (hit) finish(false, hit);
       };
+      const onAbort = () => finish(true);
       const finish = (timedOut: boolean, agents?: Agent[]) => {
         clearTimeout(timer);
         this.off('agent', onChange);
         this.off('removed', onChange);
+        signal?.removeEventListener('abort', onAbort);
         const list = agents ?? ids.map(id => this.agents.get(id)).filter((a): a is Agent => Boolean(a));
         resolve({ timedOut, agents: list.map(a => ({ ...a })) });
       };
       const timer = setTimeout(() => finish(true), timeoutMs);
       this.on('agent', onChange);
       this.on('removed', onChange);
-      signal?.addEventListener('abort', () => finish(true), { once: true });
+      signal?.addEventListener('abort', onAbort, { once: true });
     });
   }
 
@@ -628,7 +713,7 @@ export class Agents extends EventEmitter {
   private tickOnce() {
     const now = Date.now();
     for (const a of this.agents.values()) {
-      if (['exited', 'error'].includes(a.status)) continue;
+      if (['exited', 'error', 'queued'].includes(a.status)) continue;
       const live = this.live.get(a.id);
       // No terminal client (e.g. pty.spawn failed): keep trying, or the agent never leaves "starting".
       if (!live?.proc) {
@@ -641,7 +726,8 @@ export class Agents extends EventEmitter {
         this.setStatus(a.id, a.role === 'sub' ? 'working' : 'idle');
         continue;
       }
-      if (a.role === 'sub' && a.status === 'working' && live.lastOutputAt && now - live.lastOutputAt >= STALL_AFTER_MS) {
+      // Count silence from when this turn started too, so a sub-agent messaged after a long idle isn't stalled at once.
+      if (a.role === 'sub' && a.status === 'working' && live.lastOutputAt && now - Math.max(live.lastOutputAt, a.workStartedAt ?? 0) >= STALL_AFTER_MS) {
         this.settleFromScreen(a.id, true).catch(err => console.error('[agents] settle failed', err));
         continue;
       }
@@ -650,7 +736,7 @@ export class Agents extends EventEmitter {
       if (reportsTurns) continue;
       // Devin and shells: no hook, so read activity.
       if (a.status === 'working' && !active) {
-        if (a.role === 'sub' && a.harness === 'devin') {
+        if (a.role === 'sub' && (a.harness === 'devin' || a.harness === 'droid')) {
           const started = now - (a.workStartedAt ?? a.createdAt) > 20_000;
           if (started && now - live.lastOutputAt >= DEVIN_DONE_AFTER_MS) this.settleFromScreen(a.id).catch(err => console.error('[agents] settle failed', err));
         } else this.setStatus(a.id, 'idle');
@@ -673,6 +759,7 @@ export class Agents extends EventEmitter {
   private async reconcile() {
     const sessions = await tmux.sessions();
     for (const a of [...this.agents.values()]) {
+      if (a.status === 'queued' || this.launching.has(a.id)) continue; // no tmux session yet
       const s = sessions.get(a.session);
       if (!s) {
         if (!['exited', 'error'].includes(a.status)) {

@@ -45,7 +45,7 @@ export function writeJson(path: string, value: unknown) {
   renameSync(tmp, path);
 }
 
-export type HarnessId = 'claude' | 'codex' | 'pi' | 'devin' | 'shell';
+export type HarnessId = 'claude' | 'codex' | 'pi' | 'devin' | 'droid' | 'shell';
 
 /** How sub-agents get made. `native` means "let the harness use its own sub-agents". */
 export interface SubagentMode {
@@ -74,6 +74,8 @@ export interface Settings {
   review: ReviewAgent;
   /** full = sub-agents run without permission prompts; ask = they use the harness's normal prompts. */
   autonomy: 'full' | 'ask';
+  /** Sub-agents that may work at once; more wait as "queued". */
+  maxRunning: number;
   workspaces: Workspace[];
   activeWorkspace: string | null;
   ui: {
@@ -89,6 +91,7 @@ const DEFAULT_SETTINGS: Settings = {
   mode: { harness: 'pi', model: 'commandcode/deepseek/deepseek-v4.1-flash', thinking: null },
   review: { harness: 'mode', model: null, thinking: null, instructions: '' },
   autonomy: 'full',
+  maxRunning: 4,
   workspaces: [],
   activeWorkspace: null,
   ui: { theme: 'dark', layout: 'stack', showSubagents: true, rail: true, dashboard: true },
@@ -129,7 +132,7 @@ export function parseModeSpec(spec: string): SubagentMode {
   const trimmed = spec.trim();
   if (trimmed === 'native') return { harness: 'native', model: null, thinking: null };
   const [harness, ...rest] = trimmed.split(':');
-  const known = ['claude', 'codex', 'pi', 'devin'];
+  const known = ['claude', 'codex', 'pi', 'devin', 'droid'];
   if (!known.includes(harness)) throw new Error(`unknown harness "${harness}" (use ${known.join(', ')} or native)`);
   const thinkingLevels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
   let thinking: string | null = null;

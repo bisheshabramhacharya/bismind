@@ -255,7 +255,7 @@ export function elapsed(a: Agent, now = Date.now()): string {
   return m < 60 ? `${m}m ${String(s % 60).padStart(2, '0')}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-const HARNESS_LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', shell: 'Terminal' };
+const HARNESS_LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', droid: 'Droid', shell: 'Terminal' };
 
 /** A reference to an agent that any other agent (or a human) can follow with `bismind read <id>`. */
 export function agentRef(a: Agent): string {

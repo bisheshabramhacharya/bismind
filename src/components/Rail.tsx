@@ -67,11 +67,11 @@ function AddWorkspace({ onDone }: { onDone: () => void }) {
   );
 }
 
-const LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', shell: 'Terminal' };
+const LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', devin: 'Devin', droid: 'Droid', shell: 'Terminal' };
 function labelFor(a: Agent): string {
   if (a.title) return a.title;
   if (a.role === 'sub') return a.name;
-  const m = a.name.match(/^(claude|codex|pi|devin|terminal)(?:-(\d+))?$/);
+  const m = a.name.match(/^(claude|codex|pi|devin|droid|terminal)(?:-(\d+))?$/);
   if (!m) return a.name;
   return `${LABELS[m[1] === 'terminal' ? 'shell' : m[1]]}${m[2] ? ` ${m[2]}` : ''}`;
 }

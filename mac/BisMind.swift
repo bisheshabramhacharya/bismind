@@ -28,8 +28,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
 
     buildMenu()
     let args = CommandLine.arguments
-    if args.count > 1, let url = URL(string: args[1]) { web.load(URLRequest(url: url)) }
+    if args.count > 1, let url = URL(string: args[1]) { web.load(URLRequest(url: url)) } else { startAndLoad() }
     NSApp.activate(ignoringOtherApps: true)
+  }
+
+  // Opened from the Dock with no URL: start the server (`bismind up`), then load the app with the token.
+  func startAndLoad() {
+    let info = Bundle.main.infoDictionary ?? [:]
+    guard let node = info["BisMindNode"] as? String, let cli = info["BisMindCLI"] as? String,
+          let port = info["BisMindPort"] as? String, let dir = info["BisMindHome"] as? String else { return }
+    DispatchQueue.global().async {
+      let up = Process()
+      up.executableURL = URL(fileURLWithPath: node)
+      up.arguments = [cli, "up"]
+      try? up.run()
+      up.waitUntilExit()
+      let token = (try? String(contentsOfFile: dir + "/token", encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      guard let url = URL(string: "http://127.0.0.1:\(port)/?t=\(token)") else { return }
+      DispatchQueue.main.async { self.web.load(URLRequest(url: url)) }
+    }
   }
 
   // Clicking the Dock icon brings the one window back; it never opens anything new.

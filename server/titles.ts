@@ -30,7 +30,16 @@ function syncCredentials() {
   return true;
 }
 
+/** One title at a time: a batch of 12 sub-agents must not also start 12 pi processes next to them. */
+let queue: Promise<unknown> = Promise.resolve();
+
 export function generateTitle(prompt: string): Promise<string | null> {
+  const next = queue.then(() => runTitle(prompt)).catch(() => null);
+  queue = next;
+  return next;
+}
+
+function runTitle(prompt: string): Promise<string | null> {
   if (!syncCredentials()) return Promise.resolve(null);
   const ask = `Write a 2-5 word title for the coding-agent chat below (it may be a raw terminal capture; ignore banners and UI chrome and name what the user asked for; if nothing was asked yet, reply New chat). Reply with the title only: no quotes, no trailing period.\n\n${prompt.slice(-6000)}`;
   const args = ['-p', '--no-session', '-nt', '-ne', '-ns', '-nc', '-np', '--provider', 'openai-codex', '--model', 'gpt-5.6-luna', ask];

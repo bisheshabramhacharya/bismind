@@ -43,6 +43,13 @@ export function HarnessIcon({ id, size = 18, className }: P & { id: HarnessId | 
           <path d="M9 8.5h2.6a3.5 3.5 0 0 1 0 7H9z" fill="none" stroke="#5eead4" strokeWidth="1.6" strokeLinejoin="round" />
         </svg>
       );
+    case 'droid':
+      return (
+        <svg {...s}>
+          <rect x="4" y="6" width="16" height="13" rx="3" fill="none" stroke="#fb923c" strokeWidth="1.6" />
+          <path d="M12 3v3M9 11.5v2M15 11.5v2" fill="none" stroke="#fb923c" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      );
     case 'native':
       return (
         <svg {...s}>

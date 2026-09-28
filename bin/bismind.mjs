@@ -54,16 +54,21 @@ async function client() {
 /** Hooks must be fast and must never break the harness: short timeout, swallow errors. */
 async function postEvent(id, body) {
   if (!id) return;
-  try {
-    const token = cfg.readToken();
-    await fetch(`${cfg.BASE_URL}/api/agents/${id}/event`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-bismind-token': token },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(2500),
-    });
-  } catch {
-    /* server down — nothing to report to */
+  // One retry: a lost turn_end leaves a sub-agent "working" until the 90s stall check.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const token = cfg.readToken();
+      const res = await fetch(`${cfg.BASE_URL}/api/agents/${id}/event`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-bismind-token': token },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(2500),
+      });
+      if (res.ok || res.status < 500) return;
+    } catch {
+      /* server down or busy — try once more */
+    }
+    await new Promise(r => setTimeout(r, 700));
   }
 }
 
@@ -169,6 +174,10 @@ function nativeApp() {
 <key>CFBundleIconFile</key><string>BisMind</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>BisMindNode</key><string>${process.execPath}</string>
+<key>BisMindCLI</key><string>${join(REPO, 'bin', 'bismind.mjs')}</string>
+<key>BisMindPort</key><string>${cfg.PORT}</string>
+<key>BisMindHome</key><string>${cfg.DIR}</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
 `);

@@ -66,11 +66,12 @@ export const tmux = {
   },
 
   async sessions(): Promise<Map<string, { dead: boolean; exitCode: number | null; pid: number }>> {
-    const out = await run(['list-panes', '-a', '-F', '#{session_name}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_pid}']).catch(() => '');
+    // Not a tab: without a UTF-8 locale tmux prints tabs as "_", and every agent would look exited.
+    const out = await run(['list-panes', '-a', '-F', '#{session_name}|#{pane_dead}|#{pane_dead_status}|#{pane_pid}']).catch(() => '');
     const map = new Map<string, { dead: boolean; exitCode: number | null; pid: number }>();
     for (const line of out.split('\n')) {
       if (!line.trim()) continue;
-      const [name, dead, status, pid] = line.split('\t');
+      const [name, dead, status, pid] = line.split('|');
       map.set(name, { dead: dead === '1', exitCode: status ? Number(status) : null, pid: Number(pid) });
     }
     return map;

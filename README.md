@@ -26,7 +26,7 @@ bismind            # starts the server if needed and opens the app window
 (`bismind --dev` opens that).
 
 Requirements: Node 22.18+ (runs the TypeScript directly), tmux (`brew install tmux`), and whichever of
-`claude`, `codex`, `pi` and `devin` you use.
+`claude`, `codex`, `pi`, `devin` and `droid` you use.
 
 ## How it works
 
@@ -36,9 +36,11 @@ Requirements: Node 22.18+ (runs the TypeScript directly), tmux (`brew install tm
 - **Main agents** are the ones you talk to. BisMind launches them with its sub-agent tools and guidance
   on using sub-agents well: split the work, write self-contained briefs, spawn in parallel, wait instead
   of polling, answer questions, verify before reporting.
-  - Claude Code: MCP tools via `--mcp-config`, guidance via `--append-system-prompt`, and a `PreToolUse`
-    hook that **redirects** its built-in Agent/Task tool to BisMind (unless the mode is `native`).
-  - Codex: MCP tools and `developer_instructions` via `-c` overrides.
+  - Claude Code: MCP tools via `--mcp-config`, guidance via `--append-system-prompt`, and its built-in
+    Agent/Task tool removed with `--disallowedTools` (unless the mode is `native`); a `PreToolUse` hook
+    backs that up by **redirecting** any call to BisMind.
+  - Codex: MCP tools and `developer_instructions` via `-c` overrides, with its built-in `multi_agent`
+    feature disabled (unless the mode is `native`).
   - pi: a pi extension (`pi-extension/bismind.ts`) that adds the tools. It also **pushes** each
     sub-agent's result back as a message, so pi never waits or polls.
 - **Sub-agents** get a brief telling them how to report. Each harness signals the end of a turn with its final message:
@@ -61,6 +63,9 @@ Requirements: Node 22.18+ (runs the TypeScript directly), tmux (`brew install tm
   read-only reviewer per finished, unreviewed sub-agent with a branch, in that sub-agent's worktree. Each
   reports `Verdict: APPROVE | CHANGES REQUESTED`, shown on its chip. Reviewers are the main agent's
   sub-agents, so it can read their verdicts and act on them.
+- **Run queue:** at most *Run at once* sub-agents (Dashboard → Sub-agent mode → More; default 4) work
+  at the same time. Extra ones show as **queued** and start in order as others finish, so asking for
+  20 sub-agents doesn't start 20 harnesses at once. Queued ones survive a server restart.
 - **Closing a sub-agent** removes its worktree folder when it has no uncommitted changes; the branch stays.
 - **Agent references:** drag any agent (rail row, pane header, sub-agent chip) onto a terminal to paste
   `@bismind:<id> (name…; read it: bismind read <id>)`. It also drops as text into terminals outside the app.
@@ -77,7 +82,7 @@ Nothing is written to your global harness configs. Everything is passed per laun
 
 | tool | what it does |
 |---|---|
-| `spawn_subagents` | start up to 12 sub-agents in parallel on the current mode; returns immediately |
+| `spawn_subagents` | start up to 24 sub-agents on the current mode (past the run limit they queue); returns immediately |
 | `wait_subagents` | block until all (or any) settle; returns each final report (pi gets them pushed) |
 | `message_subagent` | answer a question, correct course, or give a follow-up |
 | `read_subagent` | read any agent: task, status, last report and screen |
