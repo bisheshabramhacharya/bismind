@@ -4,6 +4,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal as XTerm } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { type DragEvent, memo, useEffect, useRef, useState } from 'react';
+import { decodeOsc52, pasteText, readClipboard, registerTerminal, writeClipboard } from '../lib/clipboard';
 import { appShortcut } from '../lib/shortcuts';
 import { AGENT_DRAG_TYPE, term, useStore } from '../lib/store';
 import { terminalTheme } from '../lib/themes';
@@ -78,7 +79,25 @@ function TerminalView({ agentId, focused, onFocus: onFocusProp }: { agentId: str
         webgl = null;
       }
     });
-    xterm.attachCustomKeyEventHandler(e => !appShortcut(e));
+    const unregister = registerTerminal(xterm);
+    // Cmd+C / Cmd+V come from the native Edit menu. Ctrl+Shift+C/V work everywhere, and Ctrl+C
+    // copies only while text is selected (otherwise it stays SIGINT).
+    xterm.attachCustomKeyEventHandler(e => {
+      if (appShortcut(e)) return false;
+      if (e.type !== 'keydown' || !e.ctrlKey || e.metaKey || e.altKey) return true;
+      const k = e.key.toLowerCase();
+      if (k === 'c' && (e.shiftKey || xterm.hasSelection())) {
+        e.preventDefault();
+        void writeClipboard(xterm.getSelection());
+        return false;
+      }
+      if (k === 'v' && e.shiftKey) {
+        e.preventDefault();
+        void readClipboard().then(pasteText, () => undefined);
+        return false;
+      }
+      return true;
+    });
 
     const safeFit = () => {
       if (!el.offsetWidth || !el.offsetHeight) return;
@@ -93,6 +112,13 @@ function TerminalView({ agentId, focused, onFocus: onFocusProp }: { agentId: str
     // Replayed history contains old terminal queries; xterm's answers to them must not
     // reach the agent as keystrokes. Mute input while a snapshot is being written.
     let replaying = false;
+
+    // tmux (mouse on) owns drag-selection and hands the text to the terminal as OSC 52.
+    const osc52 = xterm.parser.registerOscHandler(52, data => {
+      const text = replaying ? null : decodeOsc52(data);
+      if (text) void writeClipboard(text).catch(() => undefined);
+      return true;
+    });
 
     // Batch output: every frame for the focused pane, 4×/s for background panes, nothing while the
     // window is hidden. A hidden backlog past QUEUE_LIMIT is dropped and re-fetched as a snapshot.
@@ -171,6 +197,8 @@ function TerminalView({ agentId, focused, onFocus: onFocusProp }: { agentId: str
       ro.disconnect();
       input.dispose();
       bin.dispose();
+      osc52.dispose();
+      unregister();
       resized.dispose();
       detach();
       cancel();

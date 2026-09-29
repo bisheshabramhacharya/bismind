@@ -21,7 +21,7 @@ set -g set-clipboard on
 set -g remain-on-exit on
 set -g window-size latest
 set -g default-terminal "tmux-256color"
-set -as terminal-features ",xterm-256color:RGB:extkeys"
+set -as terminal-features ",xterm-256color:RGB:extkeys:clipboard"
 set -g detach-on-destroy on
 `;
 

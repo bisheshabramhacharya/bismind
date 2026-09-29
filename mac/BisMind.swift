@@ -3,6 +3,27 @@
 import Cocoa
 import WebKit
 
+// The page reads and writes the system clipboard through here (window.webkit.messageHandlers.bismindClipboard).
+final class ClipboardBridge: NSObject, WKScriptMessageHandlerWithReply {
+  func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
+                             replyHandler: @escaping (Any?, String?) -> Void) {
+    let body = message.body as? [String: Any] ?? [:]
+    let pb = NSPasteboard.general
+    switch body["op"] as? String {
+    case "write":
+      if let text = body["text"] as? String {
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+      }
+      replyHandler(nil, nil)
+    case "read":
+      replyHandler(pb.string(forType: .string) ?? "", nil)
+    default:
+      replyHandler(nil, "unknown op")
+    }
+  }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
   var window: NSWindow!
   var web: WKWebView!
@@ -12,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
     config.preferences.javaScriptCanOpenWindowsAutomatically = true
     config.preferences.setValue(true, forKey: "javaScriptCanAccessClipboard")
     config.preferences.setValue(true, forKey: "DOMPasteAllowed")
+    config.userContentController.addScriptMessageHandler(ClipboardBridge(), contentWorld: .page, name: "bismindClipboard")
     web = WKWebView(frame: .zero, configuration: config)
     web.uiDelegate = self
     web.setValue(false, forKey: "drawsBackground")
@@ -64,6 +86,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
 
   @objc func reload() { web.reload() }
 
+  // Cmd+C / Cmd+V go through the page so terminals (xterm selections, tmux) and text fields
+  // behave the same, instead of relying on WebKit's own copy/paste handling.
+  @objc func copySelection() {
+    web.evaluateJavaScript("window.__bismindCopyText ? window.__bismindCopyText() : String(getSelection())") { result, _ in
+      guard let text = result as? String, !text.isEmpty else { return }
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(text, forType: .string)
+    }
+  }
+
+  @objc func pasteClipboard() {
+    guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty,
+          let data = try? JSONSerialization.data(withJSONObject: [text]),
+          let json = String(data: data, encoding: .utf8) else { return }
+    web.evaluateJavaScript("window.__bismindPaste && window.__bismindPaste(\(json)[0])")
+  }
+
   func buildMenu() {
     let main = NSMenu()
     let appItem = NSMenuItem(); main.addItem(appItem)
@@ -77,8 +116,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
     edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
     edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
     edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-    edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-    edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    edit.addItem(withTitle: "Copy", action: #selector(copySelection), keyEquivalent: "c").target = self
+    edit.addItem(withTitle: "Paste", action: #selector(pasteClipboard), keyEquivalent: "v").target = self
     edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     editItem.submenu = edit
 
