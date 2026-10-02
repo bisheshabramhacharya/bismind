@@ -150,3 +150,9 @@ mode, needs-you / working / idle) on the right. **Settings** at the bottom of th
 themes (Dark, Light, Midnight, Graphite, Nord, Paper), an accent color, the canvas layout and sub-agent
 permissions; the sun/moon next to it flips between light and dark. Drag either sidebar's inner edge to
 resize it (double-click resets it; dragging past the edge hides it, and ⌘B / ⇧⌘B bring it back).
+
+If BisMind made your agents easier to run, a ⭐ helps other people find it.
+
+## License
+
+[MIT](LICENSE)
